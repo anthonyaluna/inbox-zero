@@ -24,6 +24,7 @@ vi.mock("@/utils/prisma", () => ({
       findFirst: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -295,6 +296,7 @@ describe("updateExecutedActionWithDraftId", () => {
   const logger = createTestLogger();
   const mockFindUnique = prisma.executedAction.findUnique as Mock;
   const mockUpdate = prisma.executedAction.update as Mock;
+  const mockUpdateMany = prisma.executedAction.updateMany as Mock;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -303,8 +305,10 @@ describe("updateExecutedActionWithDraftId", () => {
         replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
         retainedContext: { preserve: true },
       },
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
     });
     mockUpdate.mockResolvedValue({});
+    mockUpdateMany.mockResolvedValue({ count: 1 });
   });
 
   it("merges a Coastline receipt without overwriting existing metadata", async () => {
@@ -340,19 +344,129 @@ describe("updateExecutedActionWithDraftId", () => {
 
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { id: "action-123" },
-      select: { draftContextMetadata: true },
+      select: { draftContextMetadata: true, updatedAt: true },
     });
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "action-123" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "action-123",
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      },
       data: {
         draftId: "draft-123",
         draftStatus: DraftEmailStatus.PENDING,
+        updatedAt: expect.any(Date),
         draftContextMetadata: {
           replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
           retainedContext: { preserve: true },
           coastlineDraft: receipt,
         },
       },
+    });
+  });
+
+  it("retries a receipt merge against the latest metadata after a concurrent update", async () => {
+    const firstUpdatedAt = new Date("2026-08-11T12:00:00.000Z");
+    const secondUpdatedAt = new Date("2026-08-11T12:00:01.000Z");
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftContextMetadata: { retainedContext: { preserve: true } },
+        updatedAt: firstUpdatedAt,
+      })
+      .mockResolvedValueOnce({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          concurrentContext: { preserve: true },
+        },
+        updatedAt: secondUpdatedAt,
+      });
+    mockUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "action-123", updatedAt: firstUpdatedAt },
+      data: expect.objectContaining({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      }),
+    });
+    expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "action-123", updatedAt: secondUpdatedAt },
+      data: expect.objectContaining({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          concurrentContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      }),
+    });
+  });
+
+  it("surfaces receipt persistence failures with a deterministic error code", async () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+    mockFindUnique.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(
+      updateExecutedActionWithDraftId({
+        actionId: "action-123",
+        draftId: "draft-123",
+        receipt,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
     });
   });
 
@@ -390,8 +504,11 @@ describe("updateExecutedActionWithDraftId", () => {
       logger,
     });
 
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "action-123" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "action-123",
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      },
       data: expect.objectContaining({
         executionError: {
           code: "COASTLINE_DRAFT_RECEIPT_FAILED",

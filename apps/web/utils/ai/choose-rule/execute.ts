@@ -113,13 +113,7 @@ export async function executeAct({
           error: actionResultError,
           logger: log,
         });
-      } else {
-        await persistExecutedActionOutcome({
-          actionId: action.id,
-          status: ExecutedActionStatus.SUCCEEDED,
-          error: null,
-          logger: log,
-        });
+        continue;
       }
 
       const draftId =
@@ -157,6 +151,13 @@ export async function executeAct({
           actionId: action.id,
         });
       }
+
+      await persistExecutedActionOutcome({
+        actionId: action.id,
+        status: ExecutedActionStatus.SUCCEEDED,
+        error: null,
+        logger: log,
+      });
     } catch (error) {
       await persistExecutedActionOutcome({
         actionId: action.id,

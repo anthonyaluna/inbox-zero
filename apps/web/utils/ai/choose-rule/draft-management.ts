@@ -8,6 +8,10 @@ import type { ParsedMessage } from "@/utils/types";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
 import type { InboxZeroDraftReceipt } from "@/utils/coastline/draft-proposal";
 
+const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
+const RECEIPT_PERSISTENCE_ERROR_CODE =
+  "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED";
+
 export type PreviousDraftHandlingResult =
   | {
       shouldCreateDraft: true;
@@ -151,30 +155,55 @@ export async function updateExecutedActionWithDraftId({
   logger: Logger;
 }) {
   try {
-    const existingAction = receipt
-      ? await prisma.executedAction.findUnique({
-          where: { id: actionId },
-          select: { draftContextMetadata: true },
-        })
-      : null;
-    const existingMetadata = toMetadataObject(
-      existingAction?.draftContextMetadata,
-    );
+    if (receipt) {
+      await persistDraftReceipt({ actionId, draftId, receipt });
+    } else {
+      await prisma.executedAction.update({
+        where: { id: actionId },
+        data: { draftId, draftStatus: DraftEmailStatus.PENDING },
+      });
+    }
+    logger.info("Updated executed action with draft ID", { actionId, draftId });
+  } catch (error) {
+    logger.error("Failed to update executed action with draft ID", {
+      actionId,
+      draftId,
+      error,
+    });
+    throw createReceiptPersistenceError(error);
+  }
+}
 
-    await prisma.executedAction.update({
+async function persistDraftReceipt({
+  actionId,
+  draftId,
+  receipt,
+}: {
+  actionId: string;
+  draftId: string;
+  receipt: InboxZeroDraftReceipt;
+}) {
+  for (let attempt = 0; attempt < MAX_RECEIPT_PERSISTENCE_ATTEMPTS; attempt++) {
+    const existingAction = await prisma.executedAction.findUnique({
       where: { id: actionId },
+      select: { draftContextMetadata: true, updatedAt: true },
+    });
+    if (!existingAction) {
+      throw new Error("Executed action is unavailable for receipt persistence");
+    }
+
+    // The version guard makes a competing metadata write retry against fresh data.
+    const result = await prisma.executedAction.updateMany({
+      where: { id: actionId, updatedAt: existingAction.updatedAt },
       data: {
         draftId,
         draftStatus: DraftEmailStatus.PENDING,
-        ...(receipt
-          ? {
-              draftContextMetadata: {
-                ...existingMetadata,
-                coastlineDraft: receipt,
-              },
-            }
-          : {}),
-        ...(receipt?.terminalState === "failed"
+        updatedAt: new Date(),
+        draftContextMetadata: {
+          ...toMetadataObject(existingAction.draftContextMetadata),
+          coastlineDraft: receipt,
+        },
+        ...(receipt.terminalState === "failed"
           ? {
               executionError: {
                 code: "COASTLINE_DRAFT_RECEIPT_FAILED",
@@ -187,14 +216,20 @@ export async function updateExecutedActionWithDraftId({
           : {}),
       },
     });
-    logger.info("Updated executed action with draft ID", { actionId, draftId });
-  } catch (error) {
-    logger.error("Failed to update executed action with draft ID", {
-      actionId,
-      draftId,
-      error,
-    });
+    if (result.count === 1) return;
   }
+
+  throw new Error("Draft receipt metadata changed during persistence");
+}
+
+function createReceiptPersistenceError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : "Coastline draft receipt persistence failed";
+  return Object.assign(new Error(message), {
+    code: RECEIPT_PERSISTENCE_ERROR_CODE,
+  });
 }
 
 function toMetadataObject(value: unknown): Record<string, unknown> {

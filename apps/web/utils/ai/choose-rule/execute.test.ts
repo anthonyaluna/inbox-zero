@@ -399,6 +399,71 @@ describe("executeAct", () => {
     });
   });
 
+  it("marks the action failed instead of succeeded when receipt persistence fails", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "thread-id-1",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+    });
+    mockUpdateExecutedActionWithDraftId.mockRejectedValueOnce(
+      Object.assign(new Error("receipt persistence failed"), {
+        code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
+      }),
+    );
+
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+    } as any;
+
+    await expect(
+      executeAct({
+        client: mockClient,
+        executedRule,
+        message,
+        emailAccount,
+        logger,
+      }),
+    ).rejects.toThrow("receipt persistence failed");
+
+    expect(mockExecutedActionUpdate).toHaveBeenCalledTimes(1);
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: {
+        executionStatus: "FAILED",
+        executedAt: expect.any(Date),
+        executionError: {
+          code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
+          message: "receipt persistence failed",
+          stack: expect.stringContaining("receipt persistence failed"),
+          statusCode: null,
+          requestId: null,
+        },
+      },
+    });
+    expect(mockExecutedRuleUpdate).toHaveBeenCalledWith({
+      where: { id: "executed-rule-1" },
+      data: { status: ExecutedRuleStatus.ERROR },
+    });
+  });
+
   it("does not report APPLIED when persisting the final status fails", async () => {
     mockRunActionFunction.mockResolvedValueOnce({ success: true });
     mockExecutedRuleUpdate.mockRejectedValueOnce(new Error("db unavailable"));
