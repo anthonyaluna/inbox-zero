@@ -49,18 +49,34 @@ export type InboxZeroDraftReceipt = z.infer<
   typeof inboxZeroDraftReceiptSchema
 >;
 
+const opaqueCanaryValueSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine(
+    (value) =>
+      value === value.trim() &&
+      !/[\s@<>]/.test(value) &&
+      !/(token|secret|cookie|oauth|bearer|authorization|password|subject|body|recipient)/i.test(
+        value,
+      ),
+    "Expected a bounded opaque value without content or credentials",
+  );
+
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
 export const inboxZeroMicrosoftCanaryReceiptSchema = z
   .object({
     schemaVersion: z.literal("inbox_zero_microsoft_canary_receipt.v1"),
     provider: z.literal("microsoft"),
     action: z.literal("draft_only"),
-    accountId: z.string().min(1),
-    threadId: z.string().min(1),
-    sourceMessageId: z.string().min(1),
-    draftId: z.string().min(1),
-    idempotencyKey: z.string().min(1),
+    accountId: opaqueCanaryValueSchema,
+    threadId: opaqueCanaryValueSchema,
+    sourceMessageId: opaqueCanaryValueSchema,
+    draftId: opaqueCanaryValueSchema,
+    idempotencyKey: opaqueCanaryValueSchema,
     graphReadbackStatus: z.literal("verified"),
-    scopeIdentity: z.string().min(1),
+    scopeIdentity: opaqueCanaryValueSchema.max(256),
     noSendCapability: z.literal("Mail.Send_absent"),
     idempotencyReplay: z.enum([
       "existing_draft_reconciled",
@@ -68,6 +84,12 @@ export const inboxZeroMicrosoftCanaryReceiptSchema = z
     ]),
     terminalState: z.literal("created_verified"),
     generatedAt: z.string().datetime(),
+    executorRegistrationId: opaqueCanaryValueSchema.max(256),
+    executorProvenanceSha256: sha256Schema,
+    connectedIdentityEvidenceId: opaqueCanaryValueSchema,
+    grantedScopesEvidenceId: opaqueCanaryValueSchema,
+    noSendEvidenceId: opaqueCanaryValueSchema,
+    graphReadbackEvidenceId: opaqueCanaryValueSchema,
   })
   .strict();
 

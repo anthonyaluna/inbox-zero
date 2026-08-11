@@ -20,6 +20,13 @@ const mockedVerifiedReceipt: InboxZeroMicrosoftCanaryReceipt = {
   idempotencyReplay: "existing_draft_reconciled",
   terminalState: "created_verified",
   generatedAt: "2026-08-11T12:00:00.000Z",
+  executorRegistrationId: "coastline-microsoft-draft-canary-v1",
+  executorProvenanceSha256:
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  connectedIdentityEvidenceId: "identity-evidence-001",
+  grantedScopesEvidenceId: "scope-evidence-001",
+  noSendEvidenceId: "no-send-evidence-001",
+  graphReadbackEvidenceId: "graph-readback-evidence-001",
 };
 
 describe("Microsoft draft-only canary receipt contract", () => {
@@ -59,6 +66,28 @@ describe("Microsoft draft-only canary receipt contract", () => {
       parseInboxZeroMicrosoftCanaryReceipt({
         ...mockedVerifiedReceipt,
         idempotencyReplay: "second_draft_created",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects content-like, credential-like, oversized, and malformed receipt values", () => {
+    for (const invalidValue of [
+      "Subject: private message",
+      "Bearer secret-token",
+      "recipient@example.com",
+      "x".repeat(513),
+    ]) {
+      expect(() =>
+        parseInboxZeroMicrosoftCanaryReceipt({
+          ...mockedVerifiedReceipt,
+          draftId: invalidValue,
+        }),
+      ).toThrow();
+    }
+    expect(() =>
+      parseInboxZeroMicrosoftCanaryReceipt({
+        ...mockedVerifiedReceipt,
+        generatedAt: "not-a-timestamp",
       }),
     ).toThrow();
   });

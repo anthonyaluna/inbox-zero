@@ -14,14 +14,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $missingPrerequisiteCode = "COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE"
-$unsafeMailboxCode = "COASTLINE_CANARY_UNSAFE_MAILBOX"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $requiredVariables = @(
   "COASTLINE_STAGING_BASE_URL",
-  "COASTLINE_MICROSOFT_CANARY_EXECUTOR_PATH",
+  "COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH",
+  "COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256",
+  "COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN",
   "COASTLINE_MICROSOFT_CANARY_MAILBOX",
   "COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID",
   "COASTLINE_MICROSOFT_CANARY_THREAD_ID",
+  "COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID",
+  "COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT",
   "COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY",
   "COASTLINE_MICROSOFT_CANARY_SCOPES",
   "COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR",
@@ -31,139 +34,210 @@ $requiredVariables = @(
 
 function Stop-Canary {
   param([string]$Code, [string]$Message)
-
   Write-Error "[$Code] $Message"
   exit 1
 }
 
-function Get-ProtectedValue {
-  param([string]$Name)
-
-  return [Environment]::GetEnvironmentVariable($Name)
-}
-
-function Test-ExactBaseUrl {
-  param([Uri]$Actual, [string]$ExpectedValue)
-
-  $expected = $null
-  if ([string]::IsNullOrWhiteSpace($ExpectedValue) -or
-    -not [Uri]::TryCreate($ExpectedValue, [UriKind]::Absolute, [ref]$expected)) {
-    return $false
-  }
-
-  return $Actual.Scheme -in @("https") -and
-    [string]::IsNullOrEmpty($Actual.UserInfo) -and
-    [string]::IsNullOrEmpty($Actual.Query) -and
-    [string]::IsNullOrEmpty($Actual.Fragment) -and
-    $Actual.AbsolutePath -eq "/" -and
-    $Actual.AbsoluteUri.TrimEnd("/") -ceq $expected.AbsoluteUri.TrimEnd("/")
+function Get-Sha256 {
+  param([string]$Value)
+  $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+  return ([Security.Cryptography.SHA256]::HashData($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
 }
 
 function Get-IdempotencyKey {
   param([string]$AccountId, [string]$ThreadId, [string]$MessageId)
+  return (@("inbox-zero", "draft", $AccountId, $ThreadId, $MessageId) |
+    ForEach-Object { [Uri]::EscapeDataString($_) }) -join "/"
+}
 
-  $parts = @("inbox-zero", "draft", $AccountId, $ThreadId, $MessageId) |
-    ForEach-Object { [Uri]::EscapeDataString($_) }
-  return $parts -join "/"
+function Test-ExactHttpsUrl {
+  param([string]$Value, [string]$Expected)
+  $actualUri = $null
+  $expectedUri = $null
+  return [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$actualUri) -and
+    [Uri]::TryCreate($Expected, [UriKind]::Absolute, [ref]$expectedUri) -and
+    $actualUri.Scheme -ceq "https" -and
+    [string]::IsNullOrEmpty($actualUri.UserInfo) -and
+    [string]::IsNullOrEmpty($actualUri.Query) -and
+    [string]::IsNullOrEmpty($actualUri.Fragment) -and
+    $actualUri.AbsoluteUri.TrimEnd("/") -ceq $expectedUri.AbsoluteUri.TrimEnd("/")
+}
+
+function Test-OpaqueValue {
+  param([object]$Value, [int]$MaximumLength = 512)
+  if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) { return $false }
+  $text = [string]$Value
+  return $text.Length -le $MaximumLength -and $text -ceq $text.Trim() -and
+    $text -notmatch '[\s@<>]' -and
+    $text -notmatch '(?i)(token|secret|cookie|oauth|bearer|authorization|password|subject|body|recipient)'
+}
+
+function Test-IsoTimestamp {
+  param([object]$Value)
+  if ($Value -isnot [string] -or $Value -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$') { return $false }
+  $parsed = [DateTimeOffset]::MinValue
+  return [DateTimeOffset]::TryParse([string]$Value, [ref]$parsed)
 }
 
 function Assert-ExactProperties {
-  param([object]$Value, [string[]]$Expected)
-
+  param([object]$Value, [string[]]$Expected, [string]$Label)
   $actual = @($Value.PSObject.Properties.Name | Sort-Object)
-  $sortedExpected = @($Expected | Sort-Object)
-  if (($actual -join "|") -cne ($sortedExpected -join "|")) {
-    throw "Canary executor returned a non-sanitized receipt contract."
+  $expectedNames = @($Expected | Sort-Object)
+  if (($actual -join "|") -cne ($expectedNames -join "|")) {
+    throw "$Label returned unapproved fields."
   }
+}
+
+function Get-IndependentEvidence {
+  param([string]$Base, [string]$Kind, [hashtable]$Headers, [hashtable]$Query)
+  $uri = [UriBuilder]::new("$($Base.TrimEnd('/'))/$Kind")
+  $uri.Query = (($Query.GetEnumerator() | ForEach-Object {
+    "{0}={1}" -f [Uri]::EscapeDataString($_.Key), [Uri]::EscapeDataString([string]$_.Value)
+  }) -join "&")
+  return Invoke-RestMethod -Uri $uri.Uri -Method Get -Headers $Headers -TimeoutSec 30
+}
+
+function Assert-IndependentEvidence {
+  param(
+    [object]$Evidence,
+    [string]$Kind,
+    [object]$Registration,
+    [hashtable]$Expected
+  )
+  Assert-ExactProperties -Value $Evidence -Expected @(
+    "schemaVersion", "kind", "evidenceId", "verifierId", "verifiedAt", "verified",
+    "accountId", "mailboxSha256", "sourceMessageId", "threadId", "draftId",
+    "scopeIdentity", "mailSendCapability", "recipientSha256"
+  ) -Label "Independent $Kind evidence"
+  if ($Evidence.schemaVersion -cne "coastline_microsoft_canary_evidence.v1" -or
+    $Evidence.kind -cne $Kind -or $Evidence.verifierId -cne $Registration.independentVerifierId -or
+    $Evidence.verified -ne $true -or -not (Test-OpaqueValue $Evidence.evidenceId) -or
+    -not (Test-OpaqueValue $Evidence.accountId) -or -not (Test-OpaqueValue $Evidence.threadId) -or
+    -not (Test-OpaqueValue $Evidence.sourceMessageId) -or
+    $Evidence.accountId -cne $Expected.accountId -or $Evidence.threadId -cne $Expected.threadId -or
+    $Evidence.sourceMessageId -cne $Expected.sourceMessageId -or
+    $Evidence.mailboxSha256 -cne $Expected.mailboxSha256 -or
+    $Evidence.recipientSha256 -cne $Expected.recipientSha256 -or
+    $Evidence.scopeIdentity -cne $Expected.scopeIdentity -or
+    $Evidence.mailSendCapability -cne "absent" -or -not (Test-IsoTimestamp $Evidence.verifiedAt)) {
+    throw "Independent $Kind evidence did not bind the protected identity and no-send values."
+  }
+  return $Evidence
 }
 
 $values = @{}
 foreach ($name in $requiredVariables) {
-  $value = Get-ProtectedValue -Name $name
-  if (-not [string]::IsNullOrWhiteSpace($value)) {
-    $values[$name] = $value.Trim()
-  }
+  $value = [Environment]::GetEnvironmentVariable($name)
+  if (-not [string]::IsNullOrWhiteSpace($value)) { $values[$name] = $value.Trim() }
 }
-
 $missing = @($requiredVariables | Where-Object { -not $values.ContainsKey($_) })
 if ($missing.Count -gt 0) {
   Stop-Canary -Code $missingPrerequisiteCode -Message "Missing protected prerequisites: $($missing -join ',')."
 }
 
-if (-not (Test-ExactBaseUrl -Actual $BaseUrl -ExpectedValue $values["COASTLINE_STAGING_BASE_URL"])) {
-  Stop-Canary -Code "COASTLINE_CANARY_UNSAFE_STAGING_TARGET" -Message "BaseUrl must exactly match the protected COASTLINE_STAGING_BASE_URL over HTTPS."
+if (-not (Test-ExactHttpsUrl -Value $BaseUrl.AbsoluteUri -Expected $values.COASTLINE_STAGING_BASE_URL)) {
+  Stop-Canary -Code "COASTLINE_CANARY_UNSAFE_STAGING_TARGET" -Message "BaseUrl must exactly match the protected HTTPS staging origin."
 }
-
-if ($values["COASTLINE_DRAFT_PROPOSALS_ENABLED"] -cne "true") {
-  Stop-Canary -Code $missingPrerequisiteCode -Message "COASTLINE_DRAFT_PROPOSALS_ENABLED must be true."
+if ($SourceMessageId -cne $values.COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID) {
+  Stop-Canary -Code "COASTLINE_CANARY_SOURCE_MESSAGE_MISMATCH" -Message "SourceMessageId does not match the protected dedicated-test source message."
 }
-if ($values["NEXT_PUBLIC_EMAIL_SEND_ENABLED"] -cne "false") {
-  Stop-Canary -Code "COASTLINE_CANARY_MAIL_SEND_ENABLED" -Message "NEXT_PUBLIC_EMAIL_SEND_ENABLED must be false."
+if ($TestRecipient -cne $values.COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT -or
+  $TestRecipient -match '(?i)(^|[-_.@])(owner|resident|tenant|vendor|ap|accounts?payable|production|operations?)([-_.@]|$)') {
+  Stop-Canary -Code "COASTLINE_CANARY_TEST_RECIPIENT_UNSAFE" -Message "TestRecipient is not the protected dedicated-test recipient."
 }
-
-$scopes = @($values["COASTLINE_MICROSOFT_CANARY_SCOPES"] -split '[,\s]+' | Where-Object { $_ })
+if ($values.COASTLINE_MICROSOFT_CANARY_MAILBOX -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$' -or
+  $values.COASTLINE_MICROSOFT_CANARY_MAILBOX -match '(?i)(^|[-_.@])(owner|resident|tenant|vendor|ap|accounts?payable|production|operations?)([-_.@]|$)') {
+  Stop-Canary -Code "COASTLINE_CANARY_MAILBOX_UNSAFE" -Message "Protected mailbox is not a dedicated test mailbox."
+}
+if ($values.COASTLINE_DRAFT_PROPOSALS_ENABLED -cne "true" -or $values.NEXT_PUBLIC_EMAIL_SEND_ENABLED -cne "false") {
+  Stop-Canary -Code "COASTLINE_CANARY_DRAFT_ONLY_POLICY_UNVERIFIED" -Message "Draft-only staging policy is not enabled with sending disabled."
+}
+$scopes = @($values.COASTLINE_MICROSOFT_CANARY_SCOPES -split '[,\s]+' | Where-Object { $_ })
 if ($scopes -contains "Mail.Send") {
   Stop-Canary -Code "COASTLINE_CANARY_MAIL_SEND_SCOPE_PRESENT" -Message "Protected Microsoft scopes include Mail.Send."
 }
 
-$mailbox = $values["COASTLINE_MICROSOFT_CANARY_MAILBOX"]
-if ($mailbox -match '(?i)(^|[-_.@])(ap|accounts?payable|owner|resident|tenant|vendor|production|operations?)([-_.@]|$)') {
-  Stop-Canary -Code $unsafeMailboxCode -Message "Protected mailbox identity is outside the dedicated test-mailbox allowlist."
+$registrationPath = $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH
+if (-not (Test-Path -LiteralPath $registrationPath -PathType Leaf) -or
+  (Resolve-Path $registrationPath).Path.StartsWith((Resolve-Path $repoRoot).Path, [StringComparison]::OrdinalIgnoreCase) -or
+  (Get-FileHash -LiteralPath $registrationPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256) {
+  Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_PROVENANCE_INVALID" -Message "Protected executor registration provenance could not be verified."
 }
-
-$executorPath = $values["COASTLINE_MICROSOFT_CANARY_EXECUTOR_PATH"]
-if ($executorPath -notmatch '^/api/[A-Za-z0-9/_-]+$' -or
-  $executorPath -match '(?i)(send|delete|archive|mark-read|move|unsubscribe|rule)') {
-  Stop-Canary -Code "COASTLINE_CANARY_UNSAFE_EXECUTOR" -Message "Protected canary executor path is not draft-only."
+try { $registration = Get-Content -LiteralPath $registrationPath -Raw | ConvertFrom-Json } catch {
+  Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_PROVENANCE_INVALID" -Message "Protected executor registration is unreadable."
 }
-
-$receiptDirectory = $values["COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR"]
-if (-not (Test-Path -LiteralPath $receiptDirectory -PathType Container) -or
-  (Resolve-Path -LiteralPath $receiptDirectory).Path.StartsWith((Resolve-Path -LiteralPath $repoRoot).Path, [System.StringComparison]::OrdinalIgnoreCase)) {
-  Stop-Canary -Code $missingPrerequisiteCode -Message "COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR must be an existing directory outside the repository."
-}
-
-$idempotencyKey = Get-IdempotencyKey -AccountId $values["COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID"] -ThreadId $values["COASTLINE_MICROSOFT_CANARY_THREAD_ID"] -MessageId $SourceMessageId
-$payload = [ordered]@{
-  action = "outlook_draft_create"
-  provider = "microsoft"
-  sourceMessageId = $SourceMessageId
-  testRecipient = $TestRecipient
-  idempotencyKey = $idempotencyKey
-  draftOnly = $true
-  externalMessage = $false
-}
-
 try {
-  $response = Invoke-RestMethod -Uri ("{0}{1}" -f $BaseUrl.AbsoluteUri.TrimEnd("/"), $executorPath) `
-    -Method Post -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
-} catch {
-  Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_UNVERIFIED" -Message "The protected draft-only executor did not return a verified canary receipt."
-}
-
-$expectedReceiptProperties = @(
-  "schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId",
-  "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity",
-  "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt"
-)
-try {
-  Assert-ExactProperties -Value $response -Expected $expectedReceiptProperties
-  $valid = $response.schemaVersion -ceq "inbox_zero_microsoft_canary_receipt.v1" -and
-    $response.provider -ceq "microsoft" -and
-    $response.action -ceq "draft_only" -and
-    $response.accountId -ceq $values["COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID"] -and
-    $response.threadId -ceq $values["COASTLINE_MICROSOFT_CANARY_THREAD_ID"] -and
-    $response.sourceMessageId -ceq $SourceMessageId -and
-    $response.idempotencyKey -ceq $idempotencyKey -and
-    $response.graphReadbackStatus -ceq "verified" -and
-    $response.scopeIdentity -ceq $values["COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY"] -and
-    $response.noSendCapability -ceq "Mail.Send_absent" -and
-    $response.idempotencyReplay -in @("existing_draft_reconciled", "duplicate_prevented") -and
-    $response.terminalState -ceq "created_verified" -and
-    -not [string]::IsNullOrWhiteSpace($response.draftId)
-  if (-not $valid) {
-    throw "Canary receipt values did not satisfy the protected draft-only contract."
+  Assert-ExactProperties -Value $registration -Expected @(
+    "schemaVersion", "registrationId", "executorId", "executorUrl", "authentication",
+    "provider", "action", "draftOnly", "noSend", "independentVerifierId", "independentVerifierBaseUrl"
+  ) -Label "Executor registration"
+  $expectedExecutorUrl = "$($BaseUrl.AbsoluteUri.TrimEnd('/'))/api/coastline/microsoft-draft-canary/v1"
+  if ($registration.schemaVersion -cne "coastline_inbox_zero_microsoft_canary_executor_registration.v1" -or
+    -not (Test-OpaqueValue $registration.registrationId 256) -or -not (Test-OpaqueValue $registration.executorId 256) -or
+    -not (Test-OpaqueValue $registration.independentVerifierId 256) -or
+    -not (Test-ExactHttpsUrl -Value $registration.executorUrl -Expected $expectedExecutorUrl) -or
+    $registration.authentication -cne "bearer" -or $registration.provider -cne "microsoft" -or
+    $registration.action -cne "outlook_draft_create" -or $registration.draftOnly -ne $true -or
+    $registration.noSend -ne $true -or
+    -not (Test-ExactHttpsUrl -Value $registration.independentVerifierBaseUrl -Expected $registration.independentVerifierBaseUrl) -or
+    ([Uri]$registration.independentVerifierBaseUrl).Authority -ceq ([Uri]$registration.executorUrl).Authority) {
+    throw "Executor registration is not the registered authenticated draft-only allowlist entry."
   }
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_PROVENANCE_INVALID" -Message "Protected executor registration did not satisfy the allowlist contract."
+}
+
+$receiptDirectory = $values.COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR
+if (-not (Test-Path -LiteralPath $receiptDirectory -PathType Container) -or
+  (Resolve-Path $receiptDirectory).Path.StartsWith((Resolve-Path $repoRoot).Path, [StringComparison]::OrdinalIgnoreCase)) {
+  Stop-Canary -Code $missingPrerequisiteCode -Message "Receipt directory must exist outside the repository."
+}
+
+$headers = @{ Authorization = "Bearer $($values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN)"; "X-Coastline-Canary-Executor-Id" = $registration.executorId }
+$expected = @{
+  accountId = $values.COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID
+  threadId = $values.COASTLINE_MICROSOFT_CANARY_THREAD_ID
+  sourceMessageId = $SourceMessageId
+  mailboxSha256 = Get-Sha256 $values.COASTLINE_MICROSOFT_CANARY_MAILBOX
+  recipientSha256 = Get-Sha256 $TestRecipient
+  scopeIdentity = $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY
+}
+try {
+  $evidence = @{}
+  foreach ($kind in @("identity", "scopes", "no-send")) {
+    $evidence[$kind] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind $kind -Headers $headers -Query $expected) -Kind $kind -Registration $registration -Expected $expected
+  }
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_INDEPENDENT_EVIDENCE_MISSING" -Message "Independent identity, scope, or no-send evidence was unavailable or mismatched."
+}
+
+$idempotencyKey = Get-IdempotencyKey -AccountId $expected.accountId -ThreadId $expected.threadId -MessageId $SourceMessageId
+$payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; draftOnly = $true; externalMessage = $false }
+try {
+  $response = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
+  $expected.draftId = $response.draftId
+  $evidence["graph-readback"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "graph-readback" -Headers $headers -Query $expected) -Kind "graph-readback" -Registration $registration -Expected $expected
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_GRAPH_READBACK_UNVERIFIED" -Message "The draft-only executor or independent Graph readback evidence was unavailable or mismatched."
+}
+
+$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId")
+try {
+  Assert-ExactProperties -Value $response -Expected $expectedReceiptProperties -Label "Canary receipt"
+  $valid = $response.schemaVersion -ceq "inbox_zero_microsoft_canary_receipt.v1" -and $response.provider -ceq "microsoft" -and $response.action -ceq "draft_only" -and
+    $response.accountId -ceq $expected.accountId -and $response.threadId -ceq $expected.threadId -and $response.sourceMessageId -ceq $expected.sourceMessageId -and $response.draftId -ceq $expected.draftId -and
+    $response.idempotencyKey -ceq $idempotencyKey -and $response.graphReadbackStatus -ceq "verified" -and $response.scopeIdentity -ceq $expected.scopeIdentity -and
+    $response.noSendCapability -ceq "Mail.Send_absent" -and $response.idempotencyReplay -in @("existing_draft_reconciled", "duplicate_prevented") -and $response.terminalState -ceq "created_verified" -and
+    $response.executorRegistrationId -ceq $registration.registrationId -and $response.executorProvenanceSha256 -ceq $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 -and
+    $response.connectedIdentityEvidenceId -ceq $evidence["identity"].evidenceId -and
+    $response.grantedScopesEvidenceId -ceq $evidence["scopes"].evidenceId -and
+    $response.noSendEvidenceId -ceq $evidence["no-send"].evidenceId -and
+    $response.graphReadbackEvidenceId -ceq $evidence["graph-readback"].evidenceId
+  if (-not $valid) { throw "Canary receipt values did not satisfy the independent-evidence contract." }
+  foreach ($field in $expectedReceiptProperties) {
+    if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }
+  }
+  if ($response.executorProvenanceSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-IsoTimestamp $response.generatedAt)) { throw "Canary receipt contains an invalid hash or timestamp." }
 } catch {
   Stop-Canary -Code "COASTLINE_CANARY_RECEIPT_INVALID" -Message "The canary receipt was invalid or contained unapproved fields."
 }

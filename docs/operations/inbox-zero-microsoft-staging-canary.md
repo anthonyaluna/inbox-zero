@@ -11,13 +11,21 @@ Set these values only in the protected staging deployment environment. Do not
 put their values in Git, CI logs, receipts, shell history, or this runbook.
 
 - `COASTLINE_STAGING_BASE_URL`: exact HTTPS staging origin.
-- `COASTLINE_MICROSOFT_CANARY_EXECUTOR_PATH`: registered draft-only executor
-  path below that origin; it must not name a send or other mailbox-mutation
-  endpoint.
+- `COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH`: protected,
+  out-of-repository registration record for the one authenticated executor.
+- `COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256`: protected hash of
+  that exact registration record; it is the executor provenance binding.
+- `COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN`: protected bearer credential
+  for the registered executor and its independent verifier. The runner never
+  prints or persists it.
 - `COASTLINE_MICROSOFT_CANARY_MAILBOX`: one dedicated test mailbox only.
 - `COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID`: the connected account ID for that
   mailbox.
 - `COASTLINE_MICROSOFT_CANARY_THREAD_ID`: the known source-message thread ID.
+- `COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID`: the exact known source
+  message ID. The command argument must match it byte-for-byte.
+- `COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT`: the exact dedicated test
+  recipient. The command argument must match it byte-for-byte.
 - `COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY`: approved delegated identity and
   scope fingerprint returned by the executor.
 - `COASTLINE_MICROSOFT_CANARY_SCOPES`: consented scope names. It must not
@@ -33,22 +41,34 @@ and secret expiry in the protected deployment system, and have no `Mail.Send`
 permission. `Mail.ReadWrite` is permitted only when the connected provider
 requires it to create and read a draft.
 
-Before this run, the staging executor must be registered and independently
-implemented to: invoke only the existing `DRAFT_EMAIL`/`outlook_draft_create`
-path; use the known source message; create the one draft; read that exact draft
-back through a separate Microsoft Graph request path; verify `isDraft=true`,
-the Drafts folder, proposal subject, and fixed test recipient; replay the same
-idempotency key; and report a deterministic existing-draft reconciliation or
-duplicate-prevention result. The runner refuses any response that includes
-message content, subjects, recipients, OAuth values, tokens, or cookies.
+The registration record is an allowlist, not an arbitrary path: it must hash to
+the protected value, identify the executor, require bearer authentication, and
+allow only the fixed
+`/api/coastline/microsoft-draft-canary/v1` draft-only endpoint. It must name a
+separate HTTPS verifier identity on a different authority. The runner refuses
+blacklist-only executor selection, unknown fields, mutable route substitutions,
+or an executor with unverified provenance.
+
+Before this run, the staging executor must invoke only the existing
+`DRAFT_EMAIL`/`outlook_draft_create` path; use the protected known source
+message; create the one draft; and replay the same idempotency key. The
+independent verifier must return distinct, authenticated Microsoft Graph
+evidence for the connected account/mailbox hash, granted scope identity,
+absence of `Mail.Send`, and the exact draft Graph readback. The draft readback
+must verify `isDraft=true`, the Drafts folder, proposal subject, and fixed test
+recipient. The runner binds every evidence ID to its receipt and refuses any
+response that includes message content, subjects, recipients, OAuth values,
+tokens, cookies, content-like strings, credentials, invalid timestamps, or
+oversized values.
 
 ## Execute
 
-First verify the connected identity in the protected staging console. The
-returned mailbox identity must exactly equal
-`COASTLINE_MICROSOFT_CANARY_MAILBOX`; the account and tenant must match the
-approved app-registration record; and the scope list must exclude `Mail.Send`.
-Stop if any comparison fails.
+First verify the connected identity through the independently registered
+verifier. The returned mailbox hash must bind to the exact protected
+`COASTLINE_MICROSOFT_CANARY_MAILBOX`; the account, source message, thread, and
+recipient hash must match their exact protected values; and the scope evidence
+must exclude `Mail.Send`. The runner performs these comparisons before posting
+the draft request. Stop if any comparison fails.
 
 Run the existing staging preflight, then the canary from the staging operator
 host. Replace placeholders only with records already approved in the protected
