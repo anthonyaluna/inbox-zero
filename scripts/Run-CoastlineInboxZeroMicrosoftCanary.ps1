@@ -264,6 +264,7 @@ try {
     $response.graphReadbackEvidenceId -ceq $evidence["graph-readback"].evidenceId -and
     $response.replayGraphReadbackEvidenceId -ceq $evidence["idempotency-replay"].evidenceId -and
     $response.noDuplicateEvidenceId -ceq $evidence["no-duplicate"].evidenceId -and
+    ($response.idempotencyDraftCount -is [int] -or $response.idempotencyDraftCount -is [long]) -and
     $response.idempotencyDraftCount -eq 1
   if (-not $valid) { throw "Canary receipt values did not satisfy the independent-evidence contract." }
   foreach ($field in $expectedReceiptProperties) {

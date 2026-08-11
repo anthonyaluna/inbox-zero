@@ -50,12 +50,13 @@ Describe "Coastline Microsoft canary runner" {
     }
 
     try {
+      $script:canaryCount = 1
       foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
       function Invoke-RestMethod {
         param($Uri, $Method, $Headers, $ContentType, $Body, $TimeoutSec)
         if ($Method -eq "Post") {
           return [pscustomobject]@{
-            schemaVersion = "inbox_zero_microsoft_canary_receipt.v1"; provider = "microsoft"; action = "draft_only"; accountId = $accountId; threadId = $threadId; sourceMessageId = $sourceMessageId; draftId = "draft-001"; idempotencyKey = $idempotencyKey; graphReadbackStatus = "verified"; scopeIdentity = $scopeIdentity; noSendCapability = "Mail.Send_absent"; idempotencyReplay = "existing_draft_reconciled"; terminalState = "created_verified"; generatedAt = "2026-08-11T12:00:00.000Z"; executorRegistrationId = "registered-canary-executor"; executorProvenanceSha256 = $registrationHash; connectedIdentityEvidenceId = "identity-evidence"; grantedScopesEvidenceId = "scopes-evidence"; noSendEvidenceId = "no-send-evidence"; graphReadbackEvidenceId = "graph-evidence"; replayGraphReadbackEvidenceId = "replay-evidence"; noDuplicateEvidenceId = "unique-evidence"; idempotencyDraftCount = 1
+            schemaVersion = "inbox_zero_microsoft_canary_receipt.v1"; provider = "microsoft"; action = "draft_only"; accountId = $accountId; threadId = $threadId; sourceMessageId = $sourceMessageId; draftId = "draft-001"; idempotencyKey = $idempotencyKey; graphReadbackStatus = "verified"; scopeIdentity = $scopeIdentity; noSendCapability = "Mail.Send_absent"; idempotencyReplay = "existing_draft_reconciled"; terminalState = "created_verified"; generatedAt = "2026-08-11T12:00:00.000Z"; executorRegistrationId = "registered-canary-executor"; executorProvenanceSha256 = $registrationHash; connectedIdentityEvidenceId = "identity-evidence"; grantedScopesEvidenceId = "scopes-evidence"; noSendEvidenceId = "no-send-evidence"; graphReadbackEvidenceId = "graph-evidence"; replayGraphReadbackEvidenceId = "replay-evidence"; noDuplicateEvidenceId = "unique-evidence"; idempotencyDraftCount = $script:canaryCount
           }
         }
         $kind = ([Uri]$Uri).AbsolutePath.TrimEnd("/").Split("/")[-1]
@@ -68,6 +69,16 @@ Describe "Coastline Microsoft canary runner" {
       $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
       $receipt.idempotencyDraftCount | Should Be 1
       ($output | Out-String) | Should Not Match "COASTLINE_CANARY_RECEIPT_INVALID"
+
+      Remove-Item -LiteralPath $receiptPath -Force
+      $script:canaryCount = "1"
+      try {
+        $failedOutput = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient 2>&1
+      } catch {
+        $failedOutput = $_
+      }
+      ($failedOutput | Out-String) | Should Match "COASTLINE_CANARY_RECEIPT_INVALID"
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
     } finally {
       Remove-Item Function:Invoke-RestMethod -ErrorAction SilentlyContinue
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
