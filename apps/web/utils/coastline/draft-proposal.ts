@@ -49,6 +49,32 @@ export type InboxZeroDraftReceipt = z.infer<
   typeof inboxZeroDraftReceiptSchema
 >;
 
+export const inboxZeroMicrosoftCanaryReceiptSchema = z
+  .object({
+    schemaVersion: z.literal("inbox_zero_microsoft_canary_receipt.v1"),
+    provider: z.literal("microsoft"),
+    action: z.literal("draft_only"),
+    accountId: z.string().min(1),
+    threadId: z.string().min(1),
+    sourceMessageId: z.string().min(1),
+    draftId: z.string().min(1),
+    idempotencyKey: z.string().min(1),
+    graphReadbackStatus: z.literal("verified"),
+    scopeIdentity: z.string().min(1),
+    noSendCapability: z.literal("Mail.Send_absent"),
+    idempotencyReplay: z.enum([
+      "existing_draft_reconciled",
+      "duplicate_prevented",
+    ]),
+    terminalState: z.literal("created_verified"),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export type InboxZeroMicrosoftCanaryReceipt = z.infer<
+  typeof inboxZeroMicrosoftCanaryReceiptSchema
+>;
+
 export type InboxZeroDraftProposalActionInput = {
   accountId: string;
   threadId: string;
@@ -182,6 +208,23 @@ export function parseInboxZeroDraftReceipt(
   input: unknown,
 ): InboxZeroDraftReceipt {
   return inboxZeroDraftReceiptSchema.parse(input);
+}
+
+export function parseInboxZeroMicrosoftCanaryReceipt(
+  input: unknown,
+): InboxZeroMicrosoftCanaryReceipt {
+  const receipt = inboxZeroMicrosoftCanaryReceiptSchema.parse(input);
+  const expectedKey = buildDraftIdempotencyKey({
+    accountId: receipt.accountId,
+    threadId: receipt.threadId,
+    sourceMessageId: receipt.sourceMessageId,
+  });
+  if (receipt.idempotencyKey !== expectedKey) {
+    throw new Error(
+      "Inbox Zero Microsoft canary idempotencyKey does not match its source IDs",
+    );
+  }
+  return receipt;
 }
 
 export function toCoastlineOutlookDraftRequest(
