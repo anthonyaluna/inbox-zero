@@ -122,3 +122,19 @@ $env:RUN_INTEGRATION_TESTS = "1"
 pnpm.cmd --filter inbox-zero-ai exec vitest run `
   utils/coastline/draft-proposal.integration.test.ts
 ```
+
+## Operational readiness boundary
+
+The current decision and exact local validation evidence are recorded in
+[`docs/operations/inbox-zero-operational-readiness.md`](../operations/inbox-zero-operational-readiness.md).
+This lane remains **pilot-only** until a clean staging deployment, independent
+Microsoft draft-only canary, same-key replay proof, rollback exercise, and
+reviewed pull request are evidenced. Local emulator and mocked-contract results
+do not meet that boundary.
+
+Task 5's runner-level test-harness hardening is parked: the invalid
+string-count path is not reliably catchable while the PowerShell runner uses
+`exit 1` when dot-sourced. A real canary separately requires a registered
+staging executor, independent verifier, and approved dedicated non-production
+mailbox fixture. Do not replace either requirement with a production or
+shared-mailbox test.
