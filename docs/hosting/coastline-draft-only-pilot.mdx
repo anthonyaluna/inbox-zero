@@ -10,11 +10,14 @@ Microsoft 365 mailbox and propose a reply draft. It must not send, delete,
 archive, mark messages read, move messages, change labels, unsubscribe, or
 create rules.
 
-Inbox Zero emits the versioned `inbox_zero_draft_proposal.v1` contract from
-`apps/web/utils/coastline/draft-proposal.ts`. The Coastline adapter validates
-that contract and maps it to the existing `outlook_draft_create` action. The
-adapter owns idempotency, execution receipts, exact target resolution, and
-independent read-after-write verification.
+When `COASTLINE_DRAFT_PROPOSALS_ENABLED=true` is set in the local environment,
+the Microsoft `DRAFT_EMAIL` action returns and validates the versioned
+`inbox_zero_draft_proposal.v1` contract from
+`apps/web/utils/coastline/draft-proposal.ts`. The existing Inbox Zero draft
+creator still owns the Microsoft Graph draft write, while the Coastline adapter
+maps the validated proposal to `outlook_draft_create`. The action executor
+validates the proposal again before recording the draft ID. No send call is
+made.
 
 The proposal body is transient pilot data. Durable records should retain only
 the account, thread, source message, model, confidence, idempotency key, and
@@ -45,3 +48,21 @@ draft flow.
 On Windows, use `pnpm.cmd` for child processes. The upstream development
 helper currently assumes a Unix `pnpm` shim and a local `psql` binary, so the
 direct commands above avoid those two host-specific startup failures.
+
+## Fixture validation
+
+Run the contract and action tests without external systems:
+
+```powershell
+pnpm.cmd --filter inbox-zero-ai exec vitest run `
+  utils/coastline/draft-proposal.test.ts `
+  utils/ai/actions.test.ts
+```
+
+Run the Microsoft emulator read-after-write fixture:
+
+```powershell
+$env:RUN_INTEGRATION_TESTS = "1"
+pnpm.cmd --filter inbox-zero-ai exec vitest run `
+  utils/coastline/draft-proposal.integration.test.ts
+```

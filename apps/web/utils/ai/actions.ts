@@ -34,6 +34,14 @@ import {
 import { isMessagingDraftActionType } from "@/utils/actions/draft-reply";
 import { checkHasAccess } from "@/utils/premium/server";
 import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-management";
+import {
+  createInboxZeroDraftProposalFromAction,
+  parseInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
+import {
+  buildReplyAllRecipients,
+  mergeAndDedupeRecipients,
+} from "@/utils/email/reply-all";
 
 const MODULE = "ai-actions";
 
@@ -262,6 +270,44 @@ const draft: ActionFunction<{
     attachments,
   };
 
+  let draftProposal:
+    | ReturnType<typeof createInboxZeroDraftProposalFromAction>
+    | undefined;
+
+  if (
+    env.COASTLINE_DRAFT_PROPOSALS_ENABLED &&
+    client.name === "microsoft" &&
+    draftArgs.content.trim()
+  ) {
+    const replyAllRecipients = buildReplyAllRecipients(
+      email.headers,
+      draftArgs.to,
+      emailAccount.email,
+    );
+    draftProposal = createInboxZeroDraftProposalFromAction({
+      accountId: emailAccount.id,
+      threadId: email.threadId,
+      sourceMessageId: email.id,
+      to: normalizeProposalRecipients(replyAllRecipients.to),
+      cc: normalizeProposalRecipients(
+        mergeAndDedupeRecipients(replyAllRecipients.cc, draftArgs.cc),
+      ),
+      bcc: normalizeProposalRecipients(splitRecipientList(draftArgs.bcc ?? "")),
+      subject: draftArgs.subject ?? email.headers.subject,
+      bodyText: draftArgs.content,
+      model: "inbox-zero-action",
+      confidence: "medium",
+    });
+
+    parseInboxZeroDraftProposal(draftProposal);
+    logger.info("Validated Coastline draft-only proposal", {
+      accountId: draftProposal.account_id,
+      threadId: draftProposal.thread_id,
+      sourceMessageId: draftProposal.source_message_id,
+      idempotencyKey: draftProposal.idempotency_key,
+    });
+  }
+
   const result = await client.draftEmail(
     {
       id: email.id,
@@ -281,8 +327,19 @@ const draft: ActionFunction<{
     draftArgs,
     emailAccount.email,
   );
-  return { draftId: result.draftId };
+
+  return draftProposal
+    ? { draftId: result.draftId, draftProposal }
+    : { draftId: result.draftId };
 };
+
+function normalizeProposalRecipients(value: string | string[] | undefined) {
+  const entries = Array.isArray(value) ? value : value ? [value] : [];
+  return entries
+    .flatMap((entry) => splitRecipientList(entry))
+    .map((entry) => extractEmailAddress(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
 
 const draft_messaging_channel: ActionFunction<{
   messagingChannelId?: string | null;

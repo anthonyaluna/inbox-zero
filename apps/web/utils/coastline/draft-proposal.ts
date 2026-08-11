@@ -30,6 +30,20 @@ export type InboxZeroDraftProposal = z.infer<
   typeof inboxZeroDraftProposalSchema
 >;
 
+export type InboxZeroDraftProposalActionInput = {
+  accountId: string;
+  threadId: string;
+  sourceMessageId: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  bodyText: string;
+  confidence?: InboxZeroDraftProposal["confidence"];
+  model?: string;
+  generatedAt?: Date;
+};
+
 export type CoastlineOutlookDraftRequest = {
   action: "outlook_draft_create";
   provider: "microsoft";
@@ -68,6 +82,40 @@ export function createInboxZeroDraftProposal(
     source: "inbox_zero",
     action: "draft_only",
     ...input,
+  });
+}
+
+export function createInboxZeroDraftProposalFromAction({
+  accountId,
+  threadId,
+  sourceMessageId,
+  to,
+  cc = [],
+  bcc = [],
+  subject,
+  bodyText,
+  confidence = "medium",
+  model = "inbox-zero-action",
+  generatedAt = new Date(),
+}: InboxZeroDraftProposalActionInput): InboxZeroDraftProposal {
+  return createInboxZeroDraftProposal({
+    provider: "microsoft",
+    account_id: accountId,
+    thread_id: threadId,
+    source_message_id: sourceMessageId,
+    to,
+    cc,
+    bcc,
+    subject,
+    body_text: bodyText,
+    confidence,
+    model,
+    idempotency_key: buildDraftIdempotencyKey({
+      accountId,
+      threadId,
+      sourceMessageId,
+    }),
+    generated_at: generatedAt.toISOString(),
   });
 }
 

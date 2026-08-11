@@ -19,12 +19,14 @@ import { sendColdEmailNotification } from "@/utils/cold-email/send-notification"
 import type { ParsedMessage } from "@/utils/types";
 import prisma from "@/utils/prisma";
 import { createTestLogger } from "@/__tests__/helpers";
+import { parseInboxZeroDraftProposal } from "@/utils/coastline/draft-proposal";
 
 const { mockEnv } = vi.hoisted(() => ({
   mockEnv: {
     deleteEmailActionEnabled: true,
     autoDraftDisabled: false,
     emailSendEnabled: true,
+    coastlineDraftProposalsEnabled: false,
   },
 }));
 
@@ -38,6 +40,9 @@ vi.mock("@/env", () => ({
     },
     get NEXT_PUBLIC_EMAIL_SEND_ENABLED() {
       return mockEnv.emailSendEnabled;
+    },
+    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
+      return mockEnv.coastlineDraftProposalsEnabled;
     },
   },
 }));
@@ -179,6 +184,48 @@ describe("runActionFunction", () => {
       }),
       emailAccount.email,
     );
+  });
+
+  it("returns a validated Microsoft draft-only proposal when enabled", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    const result = await runActionFunction({
+      client,
+      email,
+      action: {
+        id: "action-1",
+        type: ActionType.DRAFT_EMAIL,
+        content: "I will send the lease packet this afternoon.",
+      },
+      emailAccount,
+      executedRule: {
+        id: "executed-rule-1",
+        threadId: "thread-1",
+        emailAccountId: "account-1",
+        ruleId: "rule-1",
+      } as any,
+      logger,
+    });
+
+    expect(result).toMatchObject({
+      draftId: "draft1",
+      draftProposal: {
+        schema_version: "inbox_zero_draft_proposal.v1",
+        source: "inbox_zero",
+        action: "draft_only",
+        provider: "microsoft",
+        account_id: "account-1",
+        thread_id: "thread-1",
+        source_message_id: "message-1",
+        to: ["sender@example.com"],
+        subject: "Property documents",
+        body_text: "I will send the lease packet this afternoon.",
+      },
+    });
+    expect(() =>
+      parseInboxZeroDraftProposal((result as any).draftProposal),
+    ).not.toThrow();
   });
 
   it("skips draft attachments when no selected attachments were persisted", async () => {

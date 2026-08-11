@@ -20,6 +20,7 @@ import {
   normalizeActionExecutionError,
   persistExecutedActionOutcome,
 } from "@/utils/ai/executed-action-outcome";
+import { parseInboxZeroDraftProposal } from "@/utils/coastline/draft-proposal";
 
 const MODULE = "ai-execute-act";
 
@@ -121,6 +122,17 @@ export async function executeAct({
         action.type === ActionType.DRAFT_EMAIL
           ? getDraftId(actionResult)
           : null;
+
+      if (action.type === ActionType.DRAFT_EMAIL) {
+        const draftProposal = getDraftProposal(actionResult);
+        if (draftProposal) {
+          const validatedProposal = parseInboxZeroDraftProposal(draftProposal);
+          log.info("Draft-only proposal passed execution validation", {
+            idempotencyKey: validatedProposal.idempotency_key,
+            sourceMessageId: validatedProposal.source_message_id,
+          });
+        }
+      }
 
       if (draftId) {
         await updateExecutedActionWithDraftId({
@@ -238,4 +250,16 @@ function getDraftId(actionResult: unknown): string | null {
   }
 
   return actionResult.draftId;
+}
+
+function getDraftProposal(actionResult: unknown): unknown | null {
+  if (
+    !actionResult ||
+    typeof actionResult !== "object" ||
+    !("draftProposal" in actionResult)
+  ) {
+    return null;
+  }
+
+  return actionResult.draftProposal ?? null;
 }
