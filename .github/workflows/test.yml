@@ -110,6 +110,12 @@ jobs:
       - name: Check working-tree patch
         run: git diff --check
 
+      - name: Run Coastline PowerShell tests
+        shell: pwsh
+        run: |
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0.0
+          Invoke-Pester -Path scripts/tests -CI
+
       - name: Run package tests
         run: pnpm test:packages
 

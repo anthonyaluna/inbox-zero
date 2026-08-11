@@ -1,6 +1,28 @@
 $scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Run-CoastlineInboxZeroMicrosoftCanary.ps1"
 
 Describe "Coastline Microsoft canary runner" {
+  It "returns nonzero and writes no receipt when prerequisites fail" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-fail-$([Guid]::NewGuid().ToString('N'))"
+    $receiptDirectory = Join-Path $testRoot "receipts"
+    New-Item -ItemType Directory -Path $receiptDirectory -Force | Out-Null
+    try {
+      $escapedScriptPath = $scriptPath.Replace("'", "''")
+      $escapedReceiptDirectory = $receiptDirectory.Replace("'", "''")
+      $command = @"
+Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
+`$env:COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = '$escapedReceiptDirectory'
+& '$escapedScriptPath' -BaseUrl 'https://staging.example.test' -SourceMessageId 'test-message' -TestRecipient 'canary@testing.example'
+"@
+      $output = & pwsh -NoProfile -Command $command 2>&1
+
+      $LASTEXITCODE | Should Be 1
+      ($output | Out-String) | Should Match "COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE"
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
+    } finally {
+      Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
   It "persists a verified receipt when independent no-duplicate evidence attests numeric count one" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-$([Guid]::NewGuid().ToString('N'))"
     $registrationPath = Join-Path $testRoot "executor-registration.json"
@@ -15,6 +37,7 @@ Describe "Coastline Microsoft canary runner" {
     $recipient = "canary@testing.example"
     $scopeIdentity = "delegated:Mail.ReadWrite,User.Read"
     $idempotencyKey = "inbox-zero/draft/test-account/test-thread/test-message"
+    $observedAt = [DateTimeOffset]::UtcNow.ToString("o")
     $registration = [ordered]@{
       schemaVersion = "coastline_inbox_zero_microsoft_canary_executor_registration.v1"
       registrationId = "registered-canary-executor"
@@ -55,13 +78,17 @@ Describe "Coastline Microsoft canary runner" {
       function Invoke-RestMethod {
         param($Uri, $Method, $Headers, $ContentType, $Body, $TimeoutSec)
         if ($Method -eq "Post") {
+          $request = $Body | ConvertFrom-Json
+          $script:runNonce = $request.runNonce
           return [pscustomobject]@{
-            schemaVersion = "inbox_zero_microsoft_canary_receipt.v1"; provider = "microsoft"; action = "draft_only"; accountId = $accountId; threadId = $threadId; sourceMessageId = $sourceMessageId; draftId = "draft-001"; idempotencyKey = $idempotencyKey; graphReadbackStatus = "verified"; scopeIdentity = $scopeIdentity; noSendCapability = "Mail.Send_absent"; idempotencyReplay = "existing_draft_reconciled"; terminalState = "created_verified"; generatedAt = "2026-08-11T12:00:00.000Z"; executorRegistrationId = "registered-canary-executor"; executorProvenanceSha256 = $registrationHash; connectedIdentityEvidenceId = "identity-evidence"; grantedScopesEvidenceId = "scopes-evidence"; noSendEvidenceId = "no-send-evidence"; graphReadbackEvidenceId = "graph-evidence"; replayGraphReadbackEvidenceId = "replay-evidence"; noDuplicateEvidenceId = "unique-evidence"; idempotencyDraftCount = $script:canaryCount
+            schemaVersion = "inbox_zero_microsoft_canary_receipt.v1"; provider = "microsoft"; action = "draft_only"; accountId = $accountId; threadId = $threadId; sourceMessageId = $sourceMessageId; draftId = "draft-001"; idempotencyKey = $idempotencyKey; runNonce = $script:runNonce; graphReadbackStatus = "verified"; scopeIdentity = $scopeIdentity; noSendCapability = "Mail.Send_absent"; idempotencyReplay = "existing_draft_reconciled"; terminalState = "created_verified"; generatedAt = $observedAt; executorRegistrationId = "registered-canary-executor"; executorProvenanceSha256 = $registrationHash; connectedIdentityEvidenceId = "identity-evidence"; grantedScopesEvidenceId = "scopes-evidence"; noSendEvidenceId = "no-send-evidence"; graphReadbackEvidenceId = "graph-evidence"; replayGraphReadbackEvidenceId = "replay-evidence"; noDuplicateEvidenceId = "unique-evidence"; idempotencyDraftCount = $script:canaryCount
           }
         }
+        $query = [Web.HttpUtility]::ParseQueryString(([Uri]$Uri).Query)
+        $script:runNonce = $query["runNonce"]
         $kind = ([Uri]$Uri).AbsolutePath.TrimEnd("/").Split("/")[-1]
         $evidenceId = @{ identity = "identity-evidence"; scopes = "scopes-evidence"; "no-send" = "no-send-evidence"; "graph-readback" = "graph-evidence"; "idempotency-replay" = "replay-evidence"; "no-duplicate" = "unique-evidence" }[$kind]
-        return [pscustomobject]@{ schemaVersion = "coastline_microsoft_canary_evidence.v1"; kind = $kind; evidenceId = $evidenceId; verifierId = "independent-graph-verifier"; verifiedAt = "2026-08-11T12:00:00.000Z"; verified = $true; accountId = $accountId; mailboxSha256 = $mailboxHash; sourceMessageId = $sourceMessageId; threadId = $threadId; draftId = "draft-001"; scopeIdentity = $scopeIdentity; mailSendCapability = "absent"; recipientSha256 = $recipientHash; idempotencyKey = $idempotencyKey; idempotencyDraftCount = if ($kind -eq "no-duplicate") { 1 } else { $null } }
+        return [pscustomobject]@{ schemaVersion = "coastline_microsoft_canary_evidence.v1"; kind = $kind; evidenceId = $evidenceId; verifierId = "independent-graph-verifier"; verifiedAt = $observedAt; verified = $true; accountId = $accountId; mailboxSha256 = $mailboxHash; sourceMessageId = $sourceMessageId; threadId = $threadId; draftId = "draft-001"; scopeIdentity = $scopeIdentity; mailSendCapability = "absent"; recipientSha256 = $recipientHash; idempotencyKey = $idempotencyKey; runNonce = $script:runNonce; idempotencyDraftCount = if ($kind -eq "no-duplicate") { 1 } else { $null } }
       }
 
       $output = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient

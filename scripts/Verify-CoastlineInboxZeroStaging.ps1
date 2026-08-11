@@ -1,123 +1,115 @@
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)]
-  [Uri]$BaseUrl,
+  [Parameter(Mandatory = $true)][Uri]$BaseUrl,
   [string]$OutputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-
 function Test-SafeStagingUrl {
   param([Uri]$Url)
-
-  if ($Url.Scheme -notin @("http", "https") -or
-    -not [string]::IsNullOrEmpty($Url.UserInfo) -or
-    -not [string]::IsNullOrEmpty($Url.Query) -or
-    -not [string]::IsNullOrEmpty($Url.Fragment) -or
-    $Url.AbsolutePath -ne "/") {
-    return $false
-  }
-
-  if ($Url.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")) {
-    return $true
-  }
-
-  $protectedBaseUrlValue = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_BASE_URL")
-  $protectedBaseUrl = $null
-  if ([string]::IsNullOrWhiteSpace($protectedBaseUrlValue) -or
-    -not [Uri]::TryCreate($protectedBaseUrlValue, [UriKind]::Absolute, [ref]$protectedBaseUrl)) {
-    return $false
-  }
-
-  return $Url.AbsoluteUri.TrimEnd("/") -ceq $protectedBaseUrl.AbsoluteUri.TrimEnd("/")
+  if ($Url.Scheme -notin @("http", "https") -or $Url.UserInfo -or $Url.Query -or
+    $Url.Fragment -or $Url.AbsolutePath -ne "/") { return $false }
+  if ($Url.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")) { return $true }
+  $protected = $null
+  $value = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_BASE_URL")
+  return [Uri]::TryCreate($value, [UriKind]::Absolute, [ref]$protected) -and
+    $Url.AbsoluteUri.TrimEnd("/") -ceq $protected.AbsoluteUri.TrimEnd("/")
 }
 
-function Get-ServiceState {
-  param([string]$Service)
-
-  $id = & docker compose -f (Join-Path $repoRoot "docker-compose.yml") ps -q $Service 2>$null
-  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($id)) {
-    return "missing"
-  }
-
-  $firstId = $id | Select-Object -First 1
-  if ([string]::IsNullOrWhiteSpace($firstId)) {
-    return "missing"
-  }
-  $state = & docker inspect --format '{{.State.Status}}' ($firstId.Trim()) 2>$null
-  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($state)) {
-    return "unavailable"
-  }
-  return $state.Trim().ToLowerInvariant()
+function Test-BoundedTimestamp {
+  param([object]$Value, [DateTimeOffset]$StartedAt, [DateTimeOffset]$Now)
+  try { $parsed = [DateTimeOffset]::Parse([string]$Value) } catch { return $false }
+  return $parsed -ge $StartedAt.AddMinutes(-2) -and $parsed -le $Now.AddMinutes(2)
 }
 
-if (-not (Test-SafeStagingUrl -Url $BaseUrl)) {
+if (-not (Test-SafeStagingUrl $BaseUrl)) {
   throw "BaseUrl must be loopback or exactly match the protected COASTLINE_STAGING_BASE_URL."
 }
 
-$startedAt = [DateTime]::UtcNow.ToString("o")
-$checks = [System.Collections.Generic.List[object]]::new()
-$services = [ordered]@{}
+$protectedSha = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_ARTIFACT_SHA")
+$cronSecret = [Environment]::GetEnvironmentVariable("CRON_SECRET")
+if ($protectedSha -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($cronSecret)) {
+  throw "Remote artifact SHA and cron credential must be configured before staging verification."
+}
+
+$started = [DateTimeOffset]::UtcNow
+$runNonce = [Guid]::NewGuid().ToString("N")
 $base = $BaseUrl.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
+$checks = [System.Collections.Generic.List[object]]::new()
+$services = [ordered]@{ web = "unverified"; worker = "unverified"; queue = "unverified"; cron_unauthenticated = "unverified"; cron_authenticated = "unverified" }
+$artifactSha = $null
+$workerIdentity = $null
+$queueIdentity = $null
+$cronEvidenceId = $null
 
 try {
   $health = Invoke-WebRequest -Uri "$base/api/health" -Method Get -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
-  $healthBody = $health.Content | ConvertFrom-Json
-  if ($health.StatusCode -eq 200 -and $healthBody.status -in @("ok", "healthy")) {
-    $services["web"] = "healthy"
-    $checks.Add([pscustomobject]@{ code = "WEB_HEALTH"; status = "pass" })
-  } else {
-    $services["web"] = "unhealthy"
-    $checks.Add([pscustomobject]@{ code = "WEB_HEALTH"; status = "fail" })
-  }
+  $body = $health.Content | ConvertFrom-Json
+  if ($health.StatusCode -ne 200 -or $body.status -notin @("ok", "healthy")) { throw "unhealthy" }
+  $services.web = "healthy"
+  $checks.Add([pscustomobject]@{ code = "WEB_HEALTH"; status = "pass" })
 } catch {
-  $services["web"] = "unreachable"
+  $services.web = "unreachable"
   $checks.Add([pscustomobject]@{ code = "WEB_HEALTH"; status = "fail" })
 }
 
 try {
-  Invoke-WebRequest -Uri "$base/api/cron/scheduled-actions" -Method Get -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing | Out-Null
-  $services["cron_auth"] = "unexpected_success"
-  $checks.Add([pscustomobject]@{ code = "CRON_AUTH_REQUIRED"; status = "fail" })
+  $unauthenticated = Invoke-WebRequest -Uri "$base/api/cron/scheduled-actions?coastline_probe=$runNonce" -Method Get -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing -SkipHttpErrorCheck
+  if ($unauthenticated.StatusCode -eq 401) {
+    $services.cron_unauthenticated = "rejected"
+    $checks.Add([pscustomobject]@{ code = "CRON_UNAUTHENTICATED_REJECTED"; status = "pass" })
+  } else {
+    $checks.Add([pscustomobject]@{ code = "CRON_UNAUTHENTICATED_REJECTED"; status = "fail" })
+  }
 } catch {
-  $statusCode = $null
-  if ($_.Exception.Response) {
-    $statusCode = [int]$_.Exception.Response.StatusCode
-  }
-  if ($statusCode -eq 401) {
-    $services["cron_auth"] = "required"
-    $checks.Add([pscustomobject]@{ code = "CRON_AUTH_REQUIRED"; status = "pass" })
-  } else {
-    $services["cron_auth"] = "unverified"
-    $checks.Add([pscustomobject]@{ code = "CRON_AUTH_REQUIRED"; status = "fail" })
-  }
+  $checks.Add([pscustomobject]@{ code = "CRON_UNAUTHENTICATED_REJECTED"; status = "fail" })
 }
 
-$dockerAvailable = & docker version --format '{{.Server.Version}}' 2>$null
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dockerAvailable)) {
-  $services["worker"] = "unavailable"
-  $services["redis"] = "unavailable"
-  $checks.Add([pscustomobject]@{ code = "WORKER_QUEUE"; status = "fail" })
-} else {
-  $services["worker"] = Get-ServiceState -Service "worker"
-  $services["redis"] = Get-ServiceState -Service "redis"
-  if ($services["worker"] -eq "running" -and $services["redis"] -eq "running") {
-    $checks.Add([pscustomobject]@{ code = "WORKER_QUEUE"; status = "pass" })
-  } else {
-    $checks.Add([pscustomobject]@{ code = "WORKER_QUEUE"; status = "fail" })
-  }
+try {
+  $cron = Invoke-WebRequest -Uri "$base/api/cron/scheduled-actions?coastline_probe=$runNonce" -Method Get -Headers @{ Authorization = "Bearer $cronSecret" } -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
+  $cronBody = $cron.Content | ConvertFrom-Json
+  if ($cron.StatusCode -ne 200 -or $cronBody.authenticated -ne $true -or $cronBody.runNonce -cne $runNonce -or
+    -not (Test-BoundedTimestamp $cronBody.observedAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid cron proof" }
+  $cronEvidenceId = [string]$cronBody.evidenceId
+  $services.cron_authenticated = "verified"
+  $checks.Add([pscustomobject]@{ code = "CRON_AUTHENTICATED_SUCCESS"; status = "pass" })
+} catch {
+  $checks.Add([pscustomobject]@{ code = "CRON_AUTHENTICATED_SUCCESS"; status = "fail" })
 }
 
-$commitSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
-$passed = @($checks | Where-Object { $_.status -eq "fail" }).Count -eq 0
+try {
+  $evidence = Invoke-WebRequest -Uri "$base/api/coastline/staging-evidence?run_nonce=$runNonce" -Method Get -Headers @{ Authorization = "Bearer $cronSecret" } -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
+  $body = $evidence.Content | ConvertFrom-Json
+  $properties = @($body.PSObject.Properties.Name | Sort-Object) -join ","
+  if ($evidence.StatusCode -ne 200 -or $properties -cne "artifactSha,cronEvidenceId,observedAt,queueIdentity,queueStatus,runNonce,schemaVersion,workerIdentity,workerStatus" -or
+    $body.schemaVersion -cne "coastline_inbox_zero_remote_staging_evidence.v1" -or
+    $body.runNonce -cne $runNonce -or $body.artifactSha -cne $protectedSha -or
+    $body.workerStatus -cne "running" -or $body.queueStatus -cne "reachable" -or
+    $body.cronEvidenceId -cne $cronEvidenceId -or
+    [string]::IsNullOrWhiteSpace($body.workerIdentity) -or [string]::IsNullOrWhiteSpace($body.queueIdentity) -or
+    -not (Test-BoundedTimestamp $body.observedAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid remote evidence" }
+  $artifactSha = [string]$body.artifactSha
+  $workerIdentity = [string]$body.workerIdentity
+  $queueIdentity = [string]$body.queueIdentity
+  $services.worker = "running"
+  $services.queue = "reachable"
+  $checks.Add([pscustomobject]@{ code = "REMOTE_ARTIFACT_WORKER_QUEUE"; status = "pass" })
+} catch {
+  $checks.Add([pscustomobject]@{ code = "REMOTE_ARTIFACT_WORKER_QUEUE"; status = "fail" })
+}
+
+$passed = @($checks | Where-Object status -eq "fail").Count -eq 0
 $receipt = [ordered]@{
-  schema_version = "coastline_inbox_zero_staging_receipt.v1"
-  started_at = $startedAt
-  completed_at = [DateTime]::UtcNow.ToString("o")
-  commit_sha = $commitSha
+  schema_version = "coastline_inbox_zero_staging_receipt.v2"
+  run_nonce = $runNonce
+  started_at = $started.ToString("o")
+  completed_at = [DateTimeOffset]::UtcNow.ToString("o")
+  artifact_sha = $artifactSha
+  remote_worker_identity = $workerIdentity
+  remote_queue_identity = $queueIdentity
+  cron_evidence_id = $cronEvidenceId
   service_states = $services
   checks = $checks
   outcome = if ($passed) { "pass" } else { "fail" }
@@ -125,13 +117,10 @@ $receipt = [ordered]@{
 
 if ($OutputPath) {
   $parent = Split-Path -Parent $OutputPath
-  if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
+  if (-not $parent -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
     throw "OutputPath parent directory must already exist."
   }
   $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $OutputPath -Encoding utf8NoBOM
 }
-
 $receipt | ConvertTo-Json -Depth 5
-if (-not $passed) {
-  exit 1
-}
+if (-not $passed) { throw "Coastline remote staging verification failed." }

@@ -3,6 +3,7 @@ import { ActionType } from "@/generated/prisma/enums";
 import {
   CoastlineDraftOnlyPolicyError,
   assertCoastlineDraftOnlyAction,
+  assertCoastlineServerActionAllowed,
 } from "@/utils/coastline/draft-only-policy";
 
 describe("assertCoastlineDraftOnlyAction", () => {
@@ -67,6 +68,37 @@ describe("assertCoastlineDraftOnlyAction", () => {
         providerName: "google",
         coastlineDraftProposalsEnabled: false,
         providerCapabilities: { canDraftEmail: false },
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("assertCoastlineServerActionAllowed", () => {
+  it.each([
+    "unsubscribeSender",
+    "createRule",
+    "updateRule",
+    "deleteRule",
+    "setSenderStatus",
+  ])("blocks the %s mutation surface in Coastline mode", (actionName) => {
+    expect(() =>
+      assertCoastlineServerActionAllowed({
+        actionName,
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+        actionType: actionName,
+      }),
+    );
+  });
+
+  it("preserves server actions outside Coastline mode", () => {
+    expect(() =>
+      assertCoastlineServerActionAllowed({
+        actionName: "createRule",
+        coastlineDraftProposalsEnabled: false,
       }),
     ).not.toThrow();
   });

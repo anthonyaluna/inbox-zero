@@ -339,7 +339,7 @@ describe("executeAct", () => {
     });
   });
 
-  it("persists a sanitized Coastline receipt after creating a Microsoft draft", async () => {
+  it("accepts a Coastline action only after a persisted verified receipt", async () => {
     mockRunActionFunction.mockResolvedValueOnce({
       draftId: "draft-123",
       draftProposal: createInboxZeroDraftProposal({
@@ -361,6 +361,19 @@ describe("executeAct", () => {
         }),
         generated_at: "2026-08-11T12:00:00.000Z",
       }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/thread-id-1/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: "2026-08-11T12:00:01.000Z",
+        terminalState: "created_verified",
+      },
     });
 
     const executedRule = {
@@ -376,30 +389,14 @@ describe("executeAct", () => {
       logger,
     });
 
-    expect(mockUpdateExecutedActionWithDraftId).toHaveBeenCalledWith({
-      actionId: "action-1",
-      draftId: "draft-123",
-      receipt: {
-        schemaVersion: "inbox_zero_draft_receipt.v1",
-        provider: "microsoft",
-        accountId: "email-account-1",
-        threadId: "thread-id-1",
-        sourceMessageId: "message-id-1",
-        idempotencyKey: buildDraftIdempotencyKey({
-          accountId: "email-account-1",
-          threadId: "thread-id-1",
-          sourceMessageId: "message-id-1",
-        }),
-        draftId: "draft-123",
-        generatedAt: "2026-08-11T12:00:00.000Z",
-        readBackAt: null,
-        terminalState: "created_unverified",
-      },
-      logger,
+    expect(mockUpdateExecutedActionWithDraftId).not.toHaveBeenCalled();
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: expect.objectContaining({ executionStatus: "SUCCEEDED" }),
     });
   });
 
-  it("marks the action failed instead of succeeded when receipt persistence fails", async () => {
+  it("marks the action failed when Coastline readback is not verified", async () => {
     mockRunActionFunction.mockResolvedValueOnce({
       draftId: "draft-123",
       draftProposal: createInboxZeroDraftProposal({
@@ -421,12 +418,20 @@ describe("executeAct", () => {
         }),
         generated_at: "2026-08-11T12:00:00.000Z",
       }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/thread-id-1/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: null,
+        terminalState: "created_unverified",
+      },
     });
-    mockUpdateExecutedActionWithDraftId.mockRejectedValueOnce(
-      Object.assign(new Error("receipt persistence failed"), {
-        code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
-      }),
-    );
 
     const executedRule = {
       ...baseExecutedRule,
@@ -441,7 +446,9 @@ describe("executeAct", () => {
         emailAccount,
         logger,
       }),
-    ).rejects.toThrow("receipt persistence failed");
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED",
+    });
 
     expect(mockExecutedActionUpdate).toHaveBeenCalledTimes(1);
     expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
@@ -450,9 +457,11 @@ describe("executeAct", () => {
         executionStatus: "FAILED",
         executedAt: expect.any(Date),
         executionError: {
-          code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
-          message: "receipt persistence failed",
-          stack: expect.stringContaining("receipt persistence failed"),
+          code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED",
+          message: "Coastline draft did not return a verified receipt",
+          stack: expect.stringContaining(
+            "Coastline draft did not return a verified receipt",
+          ),
           statusCode: null,
           requestId: null,
         },

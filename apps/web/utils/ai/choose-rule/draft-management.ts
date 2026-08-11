@@ -6,11 +6,27 @@ import type { EmailProvider } from "@/utils/email/types";
 import { convertEmailHtmlToText } from "@/utils/mail";
 import type { ParsedMessage } from "@/utils/types";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
-import type { InboxZeroDraftReceipt } from "@/utils/coastline/draft-proposal";
+import {
+  createInboxZeroDraftReceipt,
+  parseInboxZeroDraftReceipt,
+  type InboxZeroDraftProposal,
+  type InboxZeroDraftReceipt,
+} from "@/utils/coastline/draft-proposal";
 
 const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
 const RECEIPT_PERSISTENCE_ERROR_CODE =
   "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED";
+const DRAFT_RECOVERY_ERROR_CODE = "COASTLINE_DRAFT_RECOVERY_REQUIRED";
+const DRAFT_READBACK_ERROR_CODE = "COASTLINE_DRAFT_READBACK_FAILED";
+
+type CoastlineDraftReservation = {
+  schemaVersion: "inbox_zero_draft_reservation.v1";
+  idempotencyKey: string;
+  accountId: string;
+  threadId: string;
+  sourceMessageId: string;
+  reservedAt: string;
+};
 
 export type PreviousDraftHandlingResult =
   | {
@@ -174,6 +190,289 @@ export async function updateExecutedActionWithDraftId({
   }
 }
 
+export async function createOrReconcileCoastlineDraft({
+  actionId,
+  proposal,
+  client,
+  createDraft,
+  logger,
+}: {
+  actionId: string;
+  proposal: InboxZeroDraftProposal;
+  client: EmailProvider;
+  createDraft: () => Promise<{ draftId: string }>;
+  logger: Logger;
+}): Promise<{ draftId: string; receipt: InboxZeroDraftReceipt }> {
+  const reservation = await reserveCoastlineDraft({ actionId, proposal });
+  let draftId = reservation.draftId;
+
+  if (!draftId) {
+    const createdDraft = await createDraft();
+    draftId = createdDraft.draftId;
+    const unverifiedReceipt = createInboxZeroDraftReceipt({
+      proposal,
+      draftId,
+    });
+    try {
+      await updateExecutedActionWithDraftId({
+        actionId,
+        draftId,
+        receipt: unverifiedReceipt,
+        logger,
+      });
+    } catch (error) {
+      await persistRecoveryReceiptBestEffort({
+        actionId,
+        draftId,
+        receipt: { ...unverifiedReceipt, terminalState: "failed" },
+        logger,
+      });
+      throw error;
+    }
+  }
+
+  try {
+    await assertExactDraftReadback({ client, draftId, proposal });
+  } catch (error) {
+    const failedReceipt = {
+      ...createInboxZeroDraftReceipt({ proposal, draftId }),
+      terminalState: "failed" as const,
+    };
+    await persistRecoveryReceiptBestEffort({
+      actionId,
+      draftId,
+      receipt: failedReceipt,
+      logger,
+    });
+    throw Object.assign(
+      new Error("Coastline draft independent readback did not match"),
+      { code: DRAFT_READBACK_ERROR_CODE, cause: error },
+    );
+  }
+
+  const receipt = createInboxZeroDraftReceipt({
+    proposal,
+    draftId,
+    readBackAt: new Date(),
+  });
+  await updateExecutedActionWithDraftId({
+    actionId,
+    draftId,
+    receipt,
+    logger,
+  });
+  await assertPersistedVerifiedReceipt({ actionId, receipt });
+
+  return { draftId, receipt };
+}
+
+async function reserveCoastlineDraft({
+  actionId,
+  proposal,
+}: {
+  actionId: string;
+  proposal: InboxZeroDraftProposal;
+}): Promise<{ draftId: string | null }> {
+  for (let attempt = 0; attempt < MAX_RECEIPT_PERSISTENCE_ATTEMPTS; attempt++) {
+    const action = await prisma.executedAction.findUnique({
+      where: { id: actionId },
+      select: {
+        draftId: true,
+        draftContextMetadata: true,
+        updatedAt: true,
+      },
+    });
+    if (!action) {
+      throw createDraftRecoveryError("Executed action is unavailable");
+    }
+
+    const metadata = toMetadataObject(action.draftContextMetadata);
+    const existingReservation = parseReservation(
+      metadata.coastlineDraftReservation,
+    );
+    const existingReceipt = parseReceipt(metadata.coastlineDraft);
+
+    if (existingReservation || existingReceipt) {
+      const existingKey =
+        existingReservation?.idempotencyKey ?? existingReceipt?.idempotencyKey;
+      if (existingKey !== proposal.idempotency_key) {
+        throw createDraftRecoveryError(
+          "Executed action is reserved for a different idempotency key",
+        );
+      }
+      const persistedDraftId = action.draftId ?? existingReceipt?.draftId;
+      if (!persistedDraftId) {
+        throw createDraftRecoveryError(
+          "Draft creation is reserved but has no recoverable draft ID",
+        );
+      }
+      return { draftId: persistedDraftId };
+    }
+
+    const reservation: CoastlineDraftReservation = {
+      schemaVersion: "inbox_zero_draft_reservation.v1",
+      idempotencyKey: proposal.idempotency_key,
+      accountId: proposal.account_id,
+      threadId: proposal.thread_id,
+      sourceMessageId: proposal.source_message_id,
+      reservedAt: new Date().toISOString(),
+    };
+    const result = await prisma.executedAction.updateMany({
+      where: { id: actionId, updatedAt: action.updatedAt },
+      data: {
+        updatedAt: new Date(),
+        draftContextMetadata: {
+          ...metadata,
+          coastlineDraftReservation: reservation,
+        },
+      },
+    });
+    if (result.count === 1) return { draftId: null };
+  }
+
+  throw createDraftRecoveryError(
+    "Draft idempotency reservation changed during persistence",
+  );
+}
+
+async function assertExactDraftReadback({
+  client,
+  draftId,
+  proposal,
+}: {
+  client: EmailProvider;
+  draftId: string;
+  proposal: InboxZeroDraftProposal;
+}) {
+  const draft = await client.getDraft(draftId);
+  if (!draft || draft.id !== draftId || draft.threadId !== proposal.thread_id) {
+    throw new Error("Draft identity did not match the reserved proposal");
+  }
+  if (
+    draft.subject.trim() !== proposal.subject.trim() ||
+    stripQuotedContent(extractDraftPlainText(draft)) !== proposal.body_text.trim()
+  ) {
+    throw new Error("Draft content did not match the reserved proposal");
+  }
+
+  const actualRecipients = normalizeRecipients([
+    draft.headers.to,
+    draft.headers.cc,
+    draft.headers.bcc,
+  ]);
+  const expectedRecipients = normalizeRecipients([
+    ...proposal.to,
+    ...proposal.cc,
+    ...proposal.bcc,
+  ]);
+  if (actualRecipients.join("\n") !== expectedRecipients.join("\n")) {
+    throw new Error("Draft recipients did not match the reserved proposal");
+  }
+}
+
+async function assertPersistedVerifiedReceipt({
+  actionId,
+  receipt,
+}: {
+  actionId: string;
+  receipt: InboxZeroDraftReceipt;
+}) {
+  const action = await prisma.executedAction.findUnique({
+    where: { id: actionId },
+    select: { draftId: true, draftContextMetadata: true },
+  });
+  const persisted = parseReceipt(
+    toMetadataObject(action?.draftContextMetadata).coastlineDraft,
+  );
+  if (
+    action?.draftId !== receipt.draftId ||
+    !persisted ||
+    persisted.terminalState !== "created_verified" ||
+    persisted.idempotencyKey !== receipt.idempotencyKey ||
+    persisted.draftId !== receipt.draftId ||
+    !persisted.readBackAt
+  ) {
+    throw createReceiptPersistenceError(
+      new Error("Persisted Coastline draft receipt readback did not match"),
+    );
+  }
+}
+
+async function persistRecoveryReceiptBestEffort({
+  actionId,
+  draftId,
+  receipt,
+  logger,
+}: {
+  actionId: string;
+  draftId: string;
+  receipt: InboxZeroDraftReceipt;
+  logger: Logger;
+}) {
+  try {
+    await updateExecutedActionWithDraftId({
+      actionId,
+      draftId,
+      receipt,
+      logger,
+    });
+  } catch (error) {
+    logger.error("Failed to persist Coastline draft recovery state", {
+      actionId,
+      draftId,
+      error,
+    });
+  }
+}
+
+function parseReservation(value: unknown): CoastlineDraftReservation | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("schemaVersion" in value) ||
+    value.schemaVersion !== "inbox_zero_draft_reservation.v1" ||
+    !("idempotencyKey" in value) ||
+    typeof value.idempotencyKey !== "string" ||
+    !("accountId" in value) ||
+    typeof value.accountId !== "string" ||
+    !("threadId" in value) ||
+    typeof value.threadId !== "string" ||
+    !("sourceMessageId" in value) ||
+    typeof value.sourceMessageId !== "string" ||
+    !("reservedAt" in value) ||
+    typeof value.reservedAt !== "string"
+  ) {
+    return null;
+  }
+  return value as CoastlineDraftReservation;
+}
+
+function parseReceipt(value: unknown): InboxZeroDraftReceipt | null {
+  const result = (() => {
+    try {
+      return parseInboxZeroDraftReceipt(value);
+    } catch {
+      return null;
+    }
+  })();
+  return result;
+}
+
+function createDraftRecoveryError(message: string) {
+  return Object.assign(new Error(message), { code: DRAFT_RECOVERY_ERROR_CODE });
+}
+
+function normalizeRecipients(values: Array<string | undefined>) {
+  return values
+    .flatMap((value) => (value ?? "").split(/[;,]/))
+    .map((value) => {
+      const match = value.match(/<([^>]+)>/);
+      return (match?.[1] ?? value).trim().toLowerCase();
+    })
+    .filter(Boolean)
+    .sort();
+}
+
 async function persistDraftReceipt({
   actionId,
   draftId,
@@ -234,7 +533,7 @@ function createReceiptPersistenceError(error: unknown) {
 
 function toMetadataObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value
+    ? (value as Record<string, unknown>)
     : {};
 }
 

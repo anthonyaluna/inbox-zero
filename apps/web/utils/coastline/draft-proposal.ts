@@ -75,6 +75,7 @@ export const inboxZeroMicrosoftCanaryReceiptSchema = z
     sourceMessageId: opaqueCanaryValueSchema,
     draftId: opaqueCanaryValueSchema,
     idempotencyKey: opaqueCanaryValueSchema,
+    runNonce: z.string().regex(/^[a-f0-9]{32}$/),
     graphReadbackStatus: z.literal("verified"),
     scopeIdentity: opaqueCanaryValueSchema.max(256),
     noSendCapability: z.literal("Mail.Send_absent"),
@@ -209,9 +210,11 @@ export function parseInboxZeroDraftProposal(
 export function createInboxZeroDraftReceipt({
   proposal,
   draftId,
+  readBackAt,
 }: {
   proposal: InboxZeroDraftProposal;
   draftId: string;
+  readBackAt?: Date;
 }): InboxZeroDraftReceipt {
   const validatedProposal = parseInboxZeroDraftProposal(proposal);
 
@@ -224,8 +227,8 @@ export function createInboxZeroDraftReceipt({
     idempotencyKey: validatedProposal.idempotency_key,
     draftId,
     generatedAt: validatedProposal.generated_at,
-    readBackAt: null,
-    terminalState: "created_unverified",
+    readBackAt: readBackAt?.toISOString() ?? null,
+    terminalState: readBackAt ? "created_verified" : "created_unverified",
   });
 }
 

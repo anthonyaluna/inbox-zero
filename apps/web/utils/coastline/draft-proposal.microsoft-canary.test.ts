@@ -14,6 +14,7 @@ const mockedVerifiedReceipt: InboxZeroMicrosoftCanaryReceipt = {
   draftId: "created-draft",
   idempotencyKey:
     "inbox-zero/draft/dedicated-canary-account/canary-thread/known-source-message",
+  runNonce: "a".repeat(32),
   graphReadbackStatus: "verified",
   scopeIdentity: "delegated:Mail.ReadWrite,User.Read",
   noSendCapability: "Mail.Send_absent",

@@ -33,7 +33,10 @@ import {
 } from "@/utils/messaging/rule-notifications";
 import { isMessagingDraftActionType } from "@/utils/actions/draft-reply";
 import { checkHasAccess } from "@/utils/premium/server";
-import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-management";
+import {
+  createOrReconcileCoastlineDraft,
+  handlePreviousDraftDeletion,
+} from "@/utils/ai/choose-rule/draft-management";
 import {
   createInboxZeroDraftProposalFromAction,
   parseInboxZeroDraftProposal,
@@ -247,11 +250,15 @@ const draft: ActionFunction<{
     }
   }
 
-  const previousDraftHandling = await handlePreviousDraftDeletion({
-    client,
-    executedRule,
-    logger,
-  });
+  const isCoastlineMicrosoftDraft =
+    env.COASTLINE_DRAFT_PROPOSALS_ENABLED && client.name === "microsoft";
+  const previousDraftHandling = isCoastlineMicrosoftDraft
+    ? { shouldCreateDraft: true as const }
+    : await handlePreviousDraftDeletion({
+        client,
+        executedRule,
+        logger,
+      });
 
   if (!previousDraftHandling.shouldCreateDraft) {
     logger.info("Skipping draft creation", {
@@ -284,11 +291,14 @@ const draft: ActionFunction<{
     | ReturnType<typeof createInboxZeroDraftProposalFromAction>
     | undefined;
 
-  if (
-    env.COASTLINE_DRAFT_PROPOSALS_ENABLED &&
-    client.name === "microsoft" &&
-    draftArgs.content.trim()
-  ) {
+  if (isCoastlineMicrosoftDraft && !draftArgs.content.trim()) {
+    throw Object.assign(
+      new Error("Coastline Microsoft drafts require non-empty proposal content"),
+      { code: "COASTLINE_DRAFT_PROPOSAL_REQUIRED" },
+    );
+  }
+
+  if (isCoastlineMicrosoftDraft) {
     const replyAllRecipients = buildReplyAllRecipients(
       email.headers,
       draftArgs.to,
@@ -318,8 +328,9 @@ const draft: ActionFunction<{
     });
   }
 
-  const result = await client.draftEmail(
-    {
+  const createDraft = () =>
+    client.draftEmail(
+      {
       id: email.id,
       threadId: email.threadId,
       headers: email.headers,
@@ -334,13 +345,28 @@ const draft: ActionFunction<{
       textHtml: email.textHtml,
       attachments: email.attachments,
     },
-    draftArgs,
-    emailAccount.email,
-  );
+      draftArgs,
+      emailAccount.email,
+    );
 
-  return draftProposal
-    ? { draftId: result.draftId, draftProposal }
-    : { draftId: result.draftId };
+  if (draftProposal) {
+    const result = await createOrReconcileCoastlineDraft({
+      actionId: args.id,
+      proposal: draftProposal,
+      client,
+      createDraft,
+      logger,
+    });
+    return {
+      draftId: result.draftId,
+      draftProposal,
+      draftReceipt: result.receipt,
+    };
+  }
+
+  const result = await createDraft();
+
+  return { draftId: result.draftId };
 };
 
 function normalizeProposalRecipients(value: string | string[] | undefined) {

@@ -21,7 +21,7 @@ import {
   persistExecutedActionOutcome,
 } from "@/utils/ai/executed-action-outcome";
 import {
-  createInboxZeroDraftReceipt,
+  parseInboxZeroDraftReceipt,
   type InboxZeroDraftReceipt,
   parseInboxZeroDraftProposal,
 } from "@/utils/coastline/draft-proposal";
@@ -130,23 +130,30 @@ export async function executeAct({
             idempotencyKey: validatedProposal.idempotency_key,
             sourceMessageId: validatedProposal.source_message_id,
           });
-          if (draftId) {
-            receipt = createInboxZeroDraftReceipt({
-              proposal: validatedProposal,
-              draftId,
-            });
+          receipt = getVerifiedDraftReceipt(actionResult);
+          if (
+            !draftId ||
+            !receipt ||
+            receipt.draftId !== draftId ||
+            receipt.idempotencyKey !== validatedProposal.idempotency_key ||
+            receipt.terminalState !== "created_verified" ||
+            !receipt.readBackAt
+          ) {
+            throw Object.assign(
+              new Error("Coastline draft did not return a verified receipt"),
+              { code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED" },
+            );
           }
         }
       }
 
-      if (draftId) {
+      if (draftId && !receipt) {
         await updateExecutedActionWithDraftId({
           actionId: action.id,
           draftId,
-          receipt,
           logger,
         });
-      } else if (action.type === ActionType.DRAFT_EMAIL) {
+      } else if (!draftId && action.type === ActionType.DRAFT_EMAIL) {
         log.warn("Draft action completed without a draft ID", {
           actionId: action.id,
         });
@@ -275,4 +282,21 @@ function getDraftProposal(actionResult: unknown): unknown | null {
   }
 
   return actionResult.draftProposal ?? null;
+}
+
+function getVerifiedDraftReceipt(
+  actionResult: unknown,
+): InboxZeroDraftReceipt | undefined {
+  if (
+    !actionResult ||
+    typeof actionResult !== "object" ||
+    !("draftReceipt" in actionResult)
+  ) {
+    return undefined;
+  }
+  try {
+    return parseInboxZeroDraftReceipt(actionResult.draftReceipt);
+  } catch {
+    return undefined;
+  }
 }

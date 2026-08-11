@@ -17,6 +17,7 @@ import {
 import { env } from "@/env";
 import { runWithAuditContext, setAuditContext } from "@/utils/audit/context";
 import { isEmailProviderRateLimitError } from "@/utils/email/is-provider-rate-limit-error";
+import { assertCoastlineServerActionAllowed } from "@/utils/coastline/draft-only-policy";
 
 const baseClient = createSafeActionClient({
   defineMetadataSchema() {
@@ -92,6 +93,10 @@ const baseClient = createSafeActionClient({
     return "An unknown error occurred.";
   },
 }).use(async ({ next, metadata }) => {
+  assertCoastlineServerActionAllowed({
+    actionName: metadata.name,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
   const requestId = randomUUID();
   const logger = createScopedLogger(metadata.name).with({ requestId });
 

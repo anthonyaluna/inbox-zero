@@ -11,6 +11,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ref-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require approved ref and exact protected SHA
+        shell: pwsh
+        env:
+          PROTECTED_SHA: ${{ vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+        run: >-
+          ./scripts/Test-CoastlineWorkflowRef.ps1
+          -WorkflowRef '${{ github.ref }}'
+          -WorkflowSha '${{ github.sha }}'
+          -ProtectedSha $env:PROTECTED_SHA
+
   quality:
     runs-on: ubuntu-latest
     env:
@@ -58,7 +73,8 @@ jobs:
         run: git diff --check
 
   preflight:
-    needs: quality
+    needs: [ref-guard, quality]
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
     runs-on: ubuntu-latest
     environment: coastline-inbox-zero-staging
     env:
@@ -74,6 +90,7 @@ jobs:
       CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
       COASTLINE_DRAFT_PROPOSALS_ENABLED: "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED: "false"
+      COASTLINE_MICROSOFT_ALLOWED_SCOPES: "openid profile email User.Read offline_access Mail.ReadWrite"
 
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +104,6 @@ jobs:
       - name: Start the existing database and Redis services
         run: docker compose up -d --wait db redis
 
-      - name: Run Coastline staging preflight
+      - name: Run local-only Coastline staging configuration preflight
         shell: pwsh
         run: ./scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging

@@ -25,7 +25,8 @@ $requiredVariables = @(
   "QUEUE_BACKEND",
   "CRON_SECRET",
   "COASTLINE_DRAFT_PROPOSALS_ENABLED",
-  "NEXT_PUBLIC_EMAIL_SEND_ENABLED"
+  "NEXT_PUBLIC_EMAIL_SEND_ENABLED",
+  "COASTLINE_MICROSOFT_ALLOWED_SCOPES"
 )
 if ($Mode -eq "Staging") {
   $requiredVariables += "COASTLINE_STAGING_BASE_URL"
@@ -127,7 +128,7 @@ $environmentFiles = if ($EnvironmentFile) {
   )
 }
 $values = Get-EnvironmentValues -Names @($requiredVariables + "REDIS_URL") -Files $environmentFiles
-$checks = [ordered]@{}
+$checks = [ordered]@{ verification_scope = "local_only" }
 $failures = [System.Collections.Generic.List[string]]::new()
 
 $status = & git -C $repoRoot status --porcelain 2>$null
@@ -199,13 +200,13 @@ if ($values.ContainsKey("MICROSOFT_BASE_URL") -and
   $failures.Add("microsoft_provider")
 }
 
-$scopeFile = Join-Path $repoRoot "apps/web/utils/outlook/scopes.ts"
-if ((Test-Path -LiteralPath $scopeFile) -and
-  ((Get-Content -LiteralPath $scopeFile -Raw) -match 'NEXT_PUBLIC_EMAIL_SEND_ENABLED')) {
-  $checks["mail_send_policy_sha256"] = (Get-FileHash -LiteralPath $scopeFile -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedScopes = @("openid", "profile", "email", "User.Read", "offline_access", "Mail.ReadWrite") | Sort-Object
+$configuredScopes = @($values["COASTLINE_MICROSOFT_ALLOWED_SCOPES"] -split '[,\s]+' | Where-Object { $_ }) | Sort-Object
+if (($configuredScopes -join "|") -ceq ($expectedScopes -join "|")) {
+  $checks["microsoft_allowed_scopes"] = "exact"
 } else {
-  $checks["mail_send_policy"] = "missing"
-  $failures.Add("mail_send_policy")
+  $checks["microsoft_allowed_scopes"] = "mismatch"
+  $failures.Add("microsoft_allowed_scopes")
 }
 
 $dockerVersion = & docker version --format '{{.Server.Version}}' 2>$null

@@ -35,3 +35,15 @@ export function assertCoastlineDraftOnlyAction({
     throw new CoastlineDraftOnlyPolicyError(actionType);
   }
 }
+
+export function assertCoastlineServerActionAllowed({
+  actionName,
+  coastlineDraftProposalsEnabled,
+}: {
+  actionName: string;
+  coastlineDraftProposalsEnabled: boolean;
+}) {
+  if (coastlineDraftProposalsEnabled) {
+    throw new CoastlineDraftOnlyPolicyError(actionName);
+  }
+}

@@ -93,7 +93,7 @@ describe("outlook client emulator configuration", () => {
     );
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("scope")).toBe(
-      "openid profile email User.Read offline_access Mail.ReadWrite MailboxSettings.ReadWrite",
+      "openid profile email User.Read offline_access Mail.ReadWrite",
     );
     expect(getMicrosoftOauthAuthorizeUrl).toHaveBeenCalledWith();
   });

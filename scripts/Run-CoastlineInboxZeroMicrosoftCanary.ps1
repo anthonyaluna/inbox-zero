@@ -34,8 +34,7 @@ $requiredVariables = @(
 
 function Stop-Canary {
   param([string]$Code, [string]$Message)
-  Write-Error "[$Code] $Message"
-  exit 1
+  throw "[$Code] $Message"
 }
 
 function Get-Sha256 {
@@ -108,7 +107,7 @@ function Assert-IndependentEvidence {
     "schemaVersion", "kind", "evidenceId", "verifierId", "verifiedAt", "verified",
     "accountId", "mailboxSha256", "sourceMessageId", "threadId", "draftId",
     "scopeIdentity", "mailSendCapability", "recipientSha256", "idempotencyKey",
-    "idempotencyDraftCount"
+    "idempotencyDraftCount", "runNonce"
   ) -Label "Independent $Kind evidence"
   if ($Evidence.schemaVersion -cne "coastline_microsoft_canary_evidence.v1" -or
     $Evidence.kind -cne $Kind -or $Evidence.verifierId -cne $Registration.independentVerifierId -or
@@ -120,7 +119,7 @@ function Assert-IndependentEvidence {
     $Evidence.mailboxSha256 -cne $Expected.mailboxSha256 -or
     $Evidence.recipientSha256 -cne $Expected.recipientSha256 -or
     $Evidence.scopeIdentity -cne $Expected.scopeIdentity -or
-    $Evidence.idempotencyKey -cne $Expected.idempotencyKey -or
+    $Evidence.idempotencyKey -cne $Expected.idempotencyKey -or $Evidence.runNonce -cne $Expected.runNonce -or
     $Evidence.mailSendCapability -cne "absent" -or -not (Test-IsoTimestamp $Evidence.verifiedAt)) {
     throw "Independent $Kind evidence did not bind the protected identity and no-send values."
   }
@@ -208,6 +207,8 @@ if (-not (Test-Path -LiteralPath $receiptDirectory -PathType Container) -or
 }
 
 $headers = @{ Authorization = "Bearer $($values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN)"; "X-Coastline-Canary-Executor-Id" = $registration.executorId }
+$runStartedAt = [DateTimeOffset]::UtcNow
+$runNonce = [Guid]::NewGuid().ToString("N")
 $expected = @{
   accountId = $values.COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID
   threadId = $values.COASTLINE_MICROSOFT_CANARY_THREAD_ID
@@ -215,6 +216,7 @@ $expected = @{
   mailboxSha256 = Get-Sha256 $values.COASTLINE_MICROSOFT_CANARY_MAILBOX
   recipientSha256 = Get-Sha256 $TestRecipient
   scopeIdentity = $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY
+  runNonce = $runNonce
 }
 $idempotencyKey = Get-IdempotencyKey -AccountId $expected.accountId -ThreadId $expected.threadId -MessageId $SourceMessageId
 $expected.idempotencyKey = $idempotencyKey
@@ -227,7 +229,7 @@ try {
   Stop-Canary -Code "COASTLINE_CANARY_INDEPENDENT_EVIDENCE_MISSING" -Message "Independent identity, scope, or no-send evidence was unavailable or mismatched."
 }
 
-$payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; draftOnly = $true; externalMessage = $false }
+$payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; runNonce = $runNonce; draftOnly = $true; externalMessage = $false }
 try {
   $response = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
 } catch {
@@ -250,12 +252,12 @@ try {
   Stop-Canary -Code "COASTLINE_CANARY_REPLAY_OR_READBACK_UNVERIFIED" -Message "Independent Graph readback or same-key idempotency replay was unavailable, mismatched, or created another draft."
 }
 
-$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId", "replayGraphReadbackEvidenceId", "noDuplicateEvidenceId", "idempotencyDraftCount")
+$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "runNonce", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId", "replayGraphReadbackEvidenceId", "noDuplicateEvidenceId", "idempotencyDraftCount")
 try {
   Assert-ExactProperties -Value $response -Expected $expectedReceiptProperties -Label "Canary receipt"
   $valid = $response.schemaVersion -ceq "inbox_zero_microsoft_canary_receipt.v1" -and $response.provider -ceq "microsoft" -and $response.action -ceq "draft_only" -and
     $response.accountId -ceq $expected.accountId -and $response.threadId -ceq $expected.threadId -and $response.sourceMessageId -ceq $expected.sourceMessageId -and $response.draftId -ceq $expected.draftId -and
-    $response.idempotencyKey -ceq $idempotencyKey -and $response.graphReadbackStatus -ceq "verified" -and $response.scopeIdentity -ceq $expected.scopeIdentity -and
+    $response.idempotencyKey -ceq $idempotencyKey -and $response.runNonce -ceq $runNonce -and $response.graphReadbackStatus -ceq "verified" -and $response.scopeIdentity -ceq $expected.scopeIdentity -and
     $response.noSendCapability -ceq "Mail.Send_absent" -and $response.idempotencyReplay -in @("existing_draft_reconciled", "duplicate_prevented") -and $response.terminalState -ceq "created_verified" -and
     $response.executorRegistrationId -ceq $registration.registrationId -and $response.executorProvenanceSha256 -ceq $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 -and
     $response.connectedIdentityEvidenceId -ceq $evidence["identity"].evidenceId -and
@@ -270,7 +272,10 @@ try {
   foreach ($field in $expectedReceiptProperties) {
     if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256", "idempotencyDraftCount") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }
   }
-  if ($response.executorProvenanceSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-IsoTimestamp $response.generatedAt)) { throw "Canary receipt contains an invalid hash or timestamp." }
+  $orderedTimes = @($evidence.identity.verifiedAt, $evidence.scopes.verifiedAt, $evidence."no-send".verifiedAt, $response.generatedAt, $evidence."graph-readback".verifiedAt, $evidence."idempotency-replay".verifiedAt, $evidence."no-duplicate".verifiedAt) | ForEach-Object { [DateTimeOffset]::Parse($_) }
+  $now = [DateTimeOffset]::UtcNow
+  if ($response.executorProvenanceSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-IsoTimestamp $response.generatedAt) -or @($orderedTimes | Where-Object { $_ -lt $runStartedAt.AddMinutes(-2) -or $_ -gt $now.AddMinutes(2) }).Count -gt 0) { throw "Canary receipt contains an invalid or unbounded timestamp." }
+  for ($i = 1; $i -lt $orderedTimes.Count; $i++) { if ($orderedTimes[$i] -lt $orderedTimes[$i - 1]) { throw "Canary evidence timestamps are not ordered." } }
 } catch {
   Stop-Canary -Code "COASTLINE_CANARY_RECEIPT_INVALID" -Message "The canary receipt was invalid or contained unapproved fields."
 }
