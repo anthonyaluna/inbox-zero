@@ -49,6 +49,24 @@ export const draftContextMetadataSchema = z.object({
       confidence: z.nativeEnum(DraftReplyConfidence),
     })
     .optional(),
+  coastlineDraft: z
+    .object({
+      schemaVersion: z.literal("inbox_zero_draft_receipt.v1"),
+      provider: z.literal("microsoft"),
+      accountId: z.string().min(1),
+      threadId: z.string().min(1),
+      sourceMessageId: z.string().min(1),
+      idempotencyKey: z.string().min(1),
+      draftId: z.string().min(1),
+      generatedAt: z.string().datetime(),
+      readBackAt: z.string().datetime().nullable(),
+      terminalState: z.enum([
+        "created_verified",
+        "created_unverified",
+        "failed",
+      ]),
+    })
+    .optional(),
 });
 
 export type DraftContextMetadata = z.infer<typeof draftContextMetadataSchema>;

@@ -30,6 +30,25 @@ export type InboxZeroDraftProposal = z.infer<
   typeof inboxZeroDraftProposalSchema
 >;
 
+export const inboxZeroDraftReceiptSchema = z
+  .object({
+    schemaVersion: z.literal("inbox_zero_draft_receipt.v1"),
+    provider: z.literal("microsoft"),
+    accountId: z.string().min(1),
+    threadId: z.string().min(1),
+    sourceMessageId: z.string().min(1),
+    idempotencyKey: z.string().min(1),
+    draftId: z.string().min(1),
+    generatedAt: z.string().datetime(),
+    readBackAt: z.string().datetime().nullable(),
+    terminalState: z.enum(["created_verified", "created_unverified", "failed"]),
+  })
+  .strict();
+
+export type InboxZeroDraftReceipt = z.infer<
+  typeof inboxZeroDraftReceiptSchema
+>;
+
 export type InboxZeroDraftProposalActionInput = {
   accountId: string;
   threadId: string;
@@ -134,6 +153,35 @@ export function parseInboxZeroDraftProposal(
     );
   }
   return proposal;
+}
+
+export function createInboxZeroDraftReceipt({
+  proposal,
+  draftId,
+}: {
+  proposal: InboxZeroDraftProposal;
+  draftId: string;
+}): InboxZeroDraftReceipt {
+  const validatedProposal = parseInboxZeroDraftProposal(proposal);
+
+  return parseInboxZeroDraftReceipt({
+    schemaVersion: "inbox_zero_draft_receipt.v1",
+    provider: "microsoft",
+    accountId: validatedProposal.account_id,
+    threadId: validatedProposal.thread_id,
+    sourceMessageId: validatedProposal.source_message_id,
+    idempotencyKey: validatedProposal.idempotency_key,
+    draftId,
+    generatedAt: validatedProposal.generated_at,
+    readBackAt: null,
+    terminalState: "created_unverified",
+  });
+}
+
+export function parseInboxZeroDraftReceipt(
+  input: unknown,
+): InboxZeroDraftReceipt {
+  return inboxZeroDraftReceiptSchema.parse(input);
 }
 
 export function toCoastlineOutlookDraftRequest(

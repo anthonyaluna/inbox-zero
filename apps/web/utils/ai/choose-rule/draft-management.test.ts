@@ -4,6 +4,7 @@ import {
   extractDraftPlainText,
   stripQuotedContent,
   isDraftUnmodified,
+  updateExecutedActionWithDraftId,
 } from "@/utils/ai/choose-rule/draft-management";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
 import prisma from "@/utils/prisma";
@@ -11,11 +12,17 @@ import { ActionType, DraftEmailStatus } from "@/generated/prisma/enums";
 import type { ParsedMessage } from "@/utils/types";
 import type { EmailProvider } from "@/utils/email/types";
 import { createTestLogger } from "@/__tests__/helpers";
+import {
+  buildDraftIdempotencyKey,
+  createInboxZeroDraftProposal,
+  createInboxZeroDraftReceipt,
+} from "@/utils/coastline/draft-proposal";
 
 vi.mock("@/utils/prisma", () => ({
   default: {
     executedAction: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
   },
@@ -281,6 +288,120 @@ describe("handlePreviousDraftDeletion", () => {
     });
 
     expect(mockDeleteDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateExecutedActionWithDraftId", () => {
+  const logger = createTestLogger();
+  const mockFindUnique = prisma.executedAction.findUnique as Mock;
+  const mockUpdate = prisma.executedAction.update as Mock;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      draftContextMetadata: {
+        replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
+        retainedContext: { preserve: true },
+      },
+    });
+    mockUpdate.mockResolvedValue({});
+  });
+
+  it("merges a Coastline receipt without overwriting existing metadata", async () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { id: "action-123" },
+      select: { draftContextMetadata: true },
+    });
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "action-123" },
+      data: {
+        draftId: "draft-123",
+        draftStatus: DraftEmailStatus.PENDING,
+        draftContextMetadata: {
+          replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
+          retainedContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      },
+    });
+  });
+
+  it("records a stable execution error when the receipt reaches failed", async () => {
+    const receipt = {
+      ...createInboxZeroDraftReceipt({
+        proposal: createInboxZeroDraftProposal({
+          provider: "microsoft",
+          account_id: "account-123",
+          thread_id: "thread-456",
+          source_message_id: "message-789",
+          to: ["recipient@example.com"],
+          cc: [],
+          bcc: [],
+          subject: "Subject excluded from receipt",
+          body_text: "Body excluded from receipt",
+          confidence: "medium",
+          model: "test-model",
+          idempotency_key: buildDraftIdempotencyKey({
+            accountId: "account-123",
+            threadId: "thread-456",
+            sourceMessageId: "message-789",
+          }),
+          generated_at: "2026-08-11T12:00:00.000Z",
+        }),
+        draftId: "draft-123",
+      }),
+      terminalState: "failed" as const,
+    };
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "action-123" },
+      data: expect.objectContaining({
+        executionError: {
+          code: "COASTLINE_DRAFT_RECEIPT_FAILED",
+          message: "Coastline draft receipt recorded a failed state",
+          stack: null,
+          statusCode: null,
+          requestId: null,
+        },
+      }),
+    });
   });
 });
 

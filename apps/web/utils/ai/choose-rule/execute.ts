@@ -20,7 +20,11 @@ import {
   normalizeActionExecutionError,
   persistExecutedActionOutcome,
 } from "@/utils/ai/executed-action-outcome";
-import { parseInboxZeroDraftProposal } from "@/utils/coastline/draft-proposal";
+import {
+  createInboxZeroDraftReceipt,
+  type InboxZeroDraftReceipt,
+  parseInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
 
 const MODULE = "ai-execute-act";
 
@@ -122,6 +126,7 @@ export async function executeAct({
         action.type === ActionType.DRAFT_EMAIL
           ? getDraftId(actionResult)
           : null;
+      let receipt: InboxZeroDraftReceipt | undefined;
 
       if (action.type === ActionType.DRAFT_EMAIL) {
         const draftProposal = getDraftProposal(actionResult);
@@ -131,6 +136,12 @@ export async function executeAct({
             idempotencyKey: validatedProposal.idempotency_key,
             sourceMessageId: validatedProposal.source_message_id,
           });
+          if (draftId) {
+            receipt = createInboxZeroDraftReceipt({
+              proposal: validatedProposal,
+              draftId,
+            });
+          }
         }
       }
 
@@ -138,6 +149,7 @@ export async function executeAct({
         await updateExecutedActionWithDraftId({
           actionId: action.id,
           draftId,
+          receipt,
           logger,
         });
       } else if (action.type === ActionType.DRAFT_EMAIL) {

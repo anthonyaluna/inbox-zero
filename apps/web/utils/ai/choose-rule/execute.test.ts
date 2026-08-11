@@ -7,6 +7,11 @@ import prisma from "@/utils/prisma";
 import type { EmailProvider } from "@/utils/email/types";
 import type { ParsedMessage } from "@/utils/types";
 import { createTestLogger } from "@/__tests__/helpers";
+import { updateExecutedActionWithDraftId } from "@/utils/ai/choose-rule/draft-management";
+import {
+  buildDraftIdempotencyKey,
+  createInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
 
 const { envMock } = vi.hoisted(() => ({
   envMock: {
@@ -20,6 +25,10 @@ vi.mock("@/env", () => ({
 
 vi.mock("@/utils/ai/actions", () => ({
   runActionFunction: vi.fn(),
+}));
+
+vi.mock("@/utils/ai/choose-rule/draft-management", () => ({
+  updateExecutedActionWithDraftId: vi.fn(),
 }));
 
 vi.mock("@/utils/prisma", () => ({
@@ -73,6 +82,8 @@ describe("executeAct", () => {
   };
 
   const mockRunActionFunction = runActionFunction as Mock;
+  const mockUpdateExecutedActionWithDraftId =
+    updateExecutedActionWithDraftId as Mock;
   const mockExecutedActionUpdate = prisma.executedAction.update as Mock;
   const mockExecutedRuleUpdate = prisma.executedRule.update as Mock;
 
@@ -325,6 +336,66 @@ describe("executeAct", () => {
     expect(mockExecutedRuleUpdate).toHaveBeenCalledWith({
       where: { id: "executed-rule-1" },
       data: { status: ExecutedRuleStatus.APPLIED },
+    });
+  });
+
+  it("persists a sanitized Coastline receipt after creating a Microsoft draft", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "thread-id-1",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+    });
+
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+    } as any;
+
+    await executeAct({
+      client: mockClient,
+      executedRule,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockUpdateExecutedActionWithDraftId).toHaveBeenCalledWith({
+      actionId: "action-1",
+      draftId: "draft-123",
+      receipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: null,
+        terminalState: "created_unverified",
+      },
+      logger,
     });
   });
 

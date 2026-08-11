@@ -6,6 +6,7 @@ import type { EmailProvider } from "@/utils/email/types";
 import { convertEmailHtmlToText } from "@/utils/mail";
 import type { ParsedMessage } from "@/utils/types";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
+import type { InboxZeroDraftReceipt } from "@/utils/coastline/draft-proposal";
 
 export type PreviousDraftHandlingResult =
   | {
@@ -141,16 +142,50 @@ export async function handlePreviousDraftDeletion({
 export async function updateExecutedActionWithDraftId({
   actionId,
   draftId,
+  receipt,
   logger,
 }: {
   actionId: string;
   draftId: string;
+  receipt?: InboxZeroDraftReceipt;
   logger: Logger;
 }) {
   try {
+    const existingAction = receipt
+      ? await prisma.executedAction.findUnique({
+          where: { id: actionId },
+          select: { draftContextMetadata: true },
+        })
+      : null;
+    const existingMetadata = toMetadataObject(
+      existingAction?.draftContextMetadata,
+    );
+
     await prisma.executedAction.update({
       where: { id: actionId },
-      data: { draftId, draftStatus: DraftEmailStatus.PENDING },
+      data: {
+        draftId,
+        draftStatus: DraftEmailStatus.PENDING,
+        ...(receipt
+          ? {
+              draftContextMetadata: {
+                ...existingMetadata,
+                coastlineDraft: receipt,
+              },
+            }
+          : {}),
+        ...(receipt?.terminalState === "failed"
+          ? {
+              executionError: {
+                code: "COASTLINE_DRAFT_RECEIPT_FAILED",
+                message: "Coastline draft receipt recorded a failed state",
+                stack: null,
+                statusCode: null,
+                requestId: null,
+              },
+            }
+          : {}),
+      },
     });
     logger.info("Updated executed action with draft ID", { actionId, draftId });
   } catch (error) {
@@ -160,6 +195,12 @@ export async function updateExecutedActionWithDraftId({
       error,
     });
   }
+}
+
+function toMetadataObject(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 /**

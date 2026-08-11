@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assertDraftOnlyProposal,
   buildDraftIdempotencyKey,
+  createInboxZeroDraftReceipt,
   createInboxZeroDraftProposal,
+  parseInboxZeroDraftReceipt,
   parseInboxZeroDraftProposal,
   toCoastlineOutlookDraftRequest,
 } from "./draft-proposal";
@@ -81,5 +83,61 @@ describe("Inbox Zero draft proposal contract", () => {
   it("supports an assertion guard for adapter callers", () => {
     const proposal = createInboxZeroDraftProposal(baseInput);
     expect(() => assertDraftOnlyProposal(proposal)).not.toThrow();
+  });
+
+  it("creates a sanitized terminal receipt for a validated proposal", () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal(baseInput),
+      draftId: "draft-123",
+    });
+
+    expect(receipt).toEqual({
+      schemaVersion: "inbox_zero_draft_receipt.v1",
+      provider: "microsoft",
+      accountId: "account-123",
+      threadId: "thread-456",
+      sourceMessageId: "message-789",
+      idempotencyKey: buildDraftIdempotencyKey({
+        accountId: "account-123",
+        threadId: "thread-456",
+        sourceMessageId: "message-789",
+      }),
+      draftId: "draft-123",
+      generatedAt: "2026-08-11T12:00:00.000Z",
+      readBackAt: null,
+      terminalState: "created_unverified",
+    });
+  });
+
+  it("rejects receipts with missing IDs or a non-Microsoft provider", () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal(baseInput),
+      draftId: "draft-123",
+    });
+
+    expect(() =>
+      parseInboxZeroDraftReceipt({ ...receipt, draftId: "" }),
+    ).toThrow();
+    expect(() =>
+      parseInboxZeroDraftReceipt({ ...receipt, provider: "google" }),
+    ).toThrow();
+  });
+
+  it("never serializes proposal body, subject, or recipients into a receipt", () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal(baseInput),
+      draftId: "draft-123",
+    });
+    const serializedReceipt = JSON.stringify(receipt);
+
+    expect(serializedReceipt).not.toContain(baseInput.subject);
+    expect(serializedReceipt).not.toContain(baseInput.body_text);
+    expect(serializedReceipt).not.toContain(baseInput.to[0]);
+    expect(receipt).not.toHaveProperty("subject");
+    expect(receipt).not.toHaveProperty("body");
+    expect(receipt).not.toHaveProperty("body_text");
+    expect(receipt).not.toHaveProperty("to");
+    expect(receipt).not.toHaveProperty("cc");
+    expect(receipt).not.toHaveProperty("bcc");
   });
 });
