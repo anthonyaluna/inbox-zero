@@ -28,6 +28,8 @@ const mockedVerifiedReceipt: InboxZeroMicrosoftCanaryReceipt = {
   noSendEvidenceId: "no-send-evidence-001",
   graphReadbackEvidenceId: "graph-readback-evidence-001",
   replayGraphReadbackEvidenceId: "replay-graph-readback-evidence-001",
+  noDuplicateEvidenceId: "no-duplicate-evidence-001",
+  idempotencyDraftCount: 1,
 };
 
 describe("Microsoft draft-only canary receipt contract", () => {
@@ -89,6 +91,25 @@ describe("Microsoft draft-only canary receipt contract", () => {
       parseInboxZeroMicrosoftCanaryReceipt({
         ...mockedVerifiedReceipt,
         generatedAt: "not-a-timestamp",
+      }),
+    ).toThrow();
+  });
+
+  it("requires the independently attested idempotency draft count to be exactly one", () => {
+    expect(() =>
+      parseInboxZeroMicrosoftCanaryReceipt({
+        ...mockedVerifiedReceipt,
+        idempotencyDraftCount: 2,
+      }),
+    ).toThrow();
+    expect(() => {
+      const { idempotencyDraftCount, ...missing } = mockedVerifiedReceipt;
+      parseInboxZeroMicrosoftCanaryReceipt(missing);
+    }).toThrow();
+    expect(() =>
+      parseInboxZeroMicrosoftCanaryReceipt({
+        ...mockedVerifiedReceipt,
+        noDuplicateEvidenceId: "recipient@example.com",
       }),
     ).toThrow();
   });

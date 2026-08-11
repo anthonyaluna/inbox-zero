@@ -91,6 +91,8 @@ export const inboxZeroMicrosoftCanaryReceiptSchema = z
     noSendEvidenceId: opaqueCanaryValueSchema,
     graphReadbackEvidenceId: opaqueCanaryValueSchema,
     replayGraphReadbackEvidenceId: opaqueCanaryValueSchema,
+    noDuplicateEvidenceId: opaqueCanaryValueSchema,
+    idempotencyDraftCount: z.literal(1),
   })
   .strict();
 

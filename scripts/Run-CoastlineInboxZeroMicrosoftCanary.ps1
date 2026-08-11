@@ -107,7 +107,8 @@ function Assert-IndependentEvidence {
   Assert-ExactProperties -Value $Evidence -Expected @(
     "schemaVersion", "kind", "evidenceId", "verifierId", "verifiedAt", "verified",
     "accountId", "mailboxSha256", "sourceMessageId", "threadId", "draftId",
-    "scopeIdentity", "mailSendCapability", "recipientSha256"
+    "scopeIdentity", "mailSendCapability", "recipientSha256", "idempotencyKey",
+    "idempotencyDraftCount"
   ) -Label "Independent $Kind evidence"
   if ($Evidence.schemaVersion -cne "coastline_microsoft_canary_evidence.v1" -or
     $Evidence.kind -cne $Kind -or $Evidence.verifierId -cne $Registration.independentVerifierId -or
@@ -119,12 +120,21 @@ function Assert-IndependentEvidence {
     $Evidence.mailboxSha256 -cne $Expected.mailboxSha256 -or
     $Evidence.recipientSha256 -cne $Expected.recipientSha256 -or
     $Evidence.scopeIdentity -cne $Expected.scopeIdentity -or
+    $Evidence.idempotencyKey -cne $Expected.idempotencyKey -or
     $Evidence.mailSendCapability -cne "absent" -or -not (Test-IsoTimestamp $Evidence.verifiedAt)) {
     throw "Independent $Kind evidence did not bind the protected identity and no-send values."
   }
   if ($Expected.ContainsKey("draftId") -and
     (-not (Test-OpaqueValue $Evidence.draftId) -or $Evidence.draftId -cne $Expected.draftId)) {
     throw "Independent $Kind evidence did not bind the created draft ID."
+  }
+  if ($Kind -eq "no-duplicate" -and
+    (($Evidence.idempotencyDraftCount -isnot [int] -and $Evidence.idempotencyDraftCount -isnot [long]) -or
+      $Evidence.idempotencyDraftCount -ne 1)) {
+    throw "Independent no-duplicate evidence did not attest an exact idempotency-bound draft count of one."
+  }
+  if ($Kind -ne "no-duplicate" -and $null -ne $Evidence.idempotencyDraftCount) {
+    throw "Only the independent no-duplicate attestation may contain an idempotency draft count."
   }
   return $Evidence
 }
@@ -206,6 +216,8 @@ $expected = @{
   recipientSha256 = Get-Sha256 $TestRecipient
   scopeIdentity = $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY
 }
+$idempotencyKey = Get-IdempotencyKey -AccountId $expected.accountId -ThreadId $expected.threadId -MessageId $SourceMessageId
+$expected.idempotencyKey = $idempotencyKey
 try {
   $evidence = @{}
   foreach ($kind in @("identity", "scopes", "no-send")) {
@@ -215,7 +227,6 @@ try {
   Stop-Canary -Code "COASTLINE_CANARY_INDEPENDENT_EVIDENCE_MISSING" -Message "Independent identity, scope, or no-send evidence was unavailable or mismatched."
 }
 
-$idempotencyKey = Get-IdempotencyKey -AccountId $expected.accountId -ThreadId $expected.threadId -MessageId $SourceMessageId
 $payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; draftOnly = $true; externalMessage = $false }
 try {
   $response = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
@@ -234,11 +245,12 @@ try {
     throw "Idempotency replay did not reconcile the original draft."
   }
   $evidence["idempotency-replay"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "idempotency-replay" -Headers $headers -Query $expected) -Kind "idempotency-replay" -Registration $registration -Expected $expected
+  $evidence["no-duplicate"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "no-duplicate" -Headers $headers -Query $expected) -Kind "no-duplicate" -Registration $registration -Expected $expected
 } catch {
   Stop-Canary -Code "COASTLINE_CANARY_REPLAY_OR_READBACK_UNVERIFIED" -Message "Independent Graph readback or same-key idempotency replay was unavailable, mismatched, or created another draft."
 }
 
-$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId", "replayGraphReadbackEvidenceId")
+$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId", "replayGraphReadbackEvidenceId", "noDuplicateEvidenceId", "idempotencyDraftCount")
 try {
   Assert-ExactProperties -Value $response -Expected $expectedReceiptProperties -Label "Canary receipt"
   $valid = $response.schemaVersion -ceq "inbox_zero_microsoft_canary_receipt.v1" -and $response.provider -ceq "microsoft" -and $response.action -ceq "draft_only" -and
@@ -250,7 +262,9 @@ try {
     $response.grantedScopesEvidenceId -ceq $evidence["scopes"].evidenceId -and
     $response.noSendEvidenceId -ceq $evidence["no-send"].evidenceId -and
     $response.graphReadbackEvidenceId -ceq $evidence["graph-readback"].evidenceId -and
-    $response.replayGraphReadbackEvidenceId -ceq $evidence["idempotency-replay"].evidenceId
+    $response.replayGraphReadbackEvidenceId -ceq $evidence["idempotency-replay"].evidenceId -and
+    $response.noDuplicateEvidenceId -ceq $evidence["no-duplicate"].evidenceId -and
+    $response.idempotencyDraftCount -eq 1
   if (-not $valid) { throw "Canary receipt values did not satisfy the independent-evidence contract." }
   foreach ($field in $expectedReceiptProperties) {
     if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }
