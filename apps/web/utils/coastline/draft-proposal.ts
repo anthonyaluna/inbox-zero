@@ -90,6 +90,7 @@ export const inboxZeroMicrosoftCanaryReceiptSchema = z
     grantedScopesEvidenceId: opaqueCanaryValueSchema,
     noSendEvidenceId: opaqueCanaryValueSchema,
     graphReadbackEvidenceId: opaqueCanaryValueSchema,
+    replayGraphReadbackEvidenceId: opaqueCanaryValueSchema,
   })
   .strict();
 

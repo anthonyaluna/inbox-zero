@@ -51,7 +51,11 @@ or an executor with unverified provenance.
 
 Before this run, the staging executor must invoke only the existing
 `DRAFT_EMAIL`/`outlook_draft_create` path; use the protected known source
-message; create the one draft; and replay the same idempotency key. The
+message; create the one draft; and replay the exact same request with the same
+idempotency key. The runner validates the initial executor draft ID as a bounded
+opaque value before it is ever sent to the verifier. Both the initial and replay
+Graph-readback evidence must bind to that exact created draft ID; the replay
+must return the same draft ID and never a second draft. The
 independent verifier must return distinct, authenticated Microsoft Graph
 evidence for the connected account/mailbox hash, granted scope identity,
 absence of `Mail.Send`, and the exact draft Graph readback. The draft readback
@@ -100,7 +104,8 @@ token, or cookie. Receipts remain private runtime evidence and are excluded
 from Git.
 
 `created_verified` is the only passing terminal state: Graph readback is
-verified, `Mail.Send` is absent, and replay reports either
+verified, `Mail.Send` is absent, both Graph readbacks bind to the created draft,
+and replay reports either
 `existing_draft_reconciled` or `duplicate_prevented`. A second draft on replay,
 missing readback, mismatched account/thread/source ID, unknown receipt field,
 or any non-draft mutation is a failed canary. Do not promote from a failed or

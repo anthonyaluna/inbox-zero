@@ -122,6 +122,10 @@ function Assert-IndependentEvidence {
     $Evidence.mailSendCapability -cne "absent" -or -not (Test-IsoTimestamp $Evidence.verifiedAt)) {
     throw "Independent $Kind evidence did not bind the protected identity and no-send values."
   }
+  if ($Expected.ContainsKey("draftId") -and
+    (-not (Test-OpaqueValue $Evidence.draftId) -or $Evidence.draftId -cne $Expected.draftId)) {
+    throw "Independent $Kind evidence did not bind the created draft ID."
+  }
   return $Evidence
 }
 
@@ -215,13 +219,26 @@ $idempotencyKey = Get-IdempotencyKey -AccountId $expected.accountId -ThreadId $e
 $payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; draftOnly = $true; externalMessage = $false }
 try {
   $response = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
-  $expected.draftId = $response.draftId
-  $evidence["graph-readback"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "graph-readback" -Headers $headers -Query $expected) -Kind "graph-readback" -Registration $registration -Expected $expected
 } catch {
-  Stop-Canary -Code "COASTLINE_CANARY_GRAPH_READBACK_UNVERIFIED" -Message "The draft-only executor or independent Graph readback evidence was unavailable or mismatched."
+  Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_UNVERIFIED" -Message "The authenticated draft-only executor did not return a receipt."
+}
+if (-not (Test-OpaqueValue $response.draftId)) {
+  Stop-Canary -Code "COASTLINE_CANARY_DRAFT_ID_INVALID" -Message "The executor returned an invalid draft ID."
+}
+$expected.draftId = $response.draftId
+try {
+  $evidence["graph-readback"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "graph-readback" -Headers $headers -Query $expected) -Kind "graph-readback" -Registration $registration -Expected $expected
+  $replayResponse = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
+  if (-not (Test-OpaqueValue $replayResponse.draftId) -or $replayResponse.draftId -cne $expected.draftId -or
+    $replayResponse.idempotencyReplay -notin @("existing_draft_reconciled", "duplicate_prevented")) {
+    throw "Idempotency replay did not reconcile the original draft."
+  }
+  $evidence["idempotency-replay"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "idempotency-replay" -Headers $headers -Query $expected) -Kind "idempotency-replay" -Registration $registration -Expected $expected
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_REPLAY_OR_READBACK_UNVERIFIED" -Message "Independent Graph readback or same-key idempotency replay was unavailable, mismatched, or created another draft."
 }
 
-$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId")
+$expectedReceiptProperties = @("schemaVersion", "provider", "action", "accountId", "threadId", "sourceMessageId", "draftId", "idempotencyKey", "graphReadbackStatus", "scopeIdentity", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorRegistrationId", "executorProvenanceSha256", "connectedIdentityEvidenceId", "grantedScopesEvidenceId", "noSendEvidenceId", "graphReadbackEvidenceId", "replayGraphReadbackEvidenceId")
 try {
   Assert-ExactProperties -Value $response -Expected $expectedReceiptProperties -Label "Canary receipt"
   $valid = $response.schemaVersion -ceq "inbox_zero_microsoft_canary_receipt.v1" -and $response.provider -ceq "microsoft" -and $response.action -ceq "draft_only" -and
@@ -232,7 +249,8 @@ try {
     $response.connectedIdentityEvidenceId -ceq $evidence["identity"].evidenceId -and
     $response.grantedScopesEvidenceId -ceq $evidence["scopes"].evidenceId -and
     $response.noSendEvidenceId -ceq $evidence["no-send"].evidenceId -and
-    $response.graphReadbackEvidenceId -ceq $evidence["graph-readback"].evidenceId
+    $response.graphReadbackEvidenceId -ceq $evidence["graph-readback"].evidenceId -and
+    $response.replayGraphReadbackEvidenceId -ceq $evidence["idempotency-replay"].evidenceId
   if (-not $valid) { throw "Canary receipt values did not satisfy the independent-evidence contract." }
   foreach ($field in $expectedReceiptProperties) {
     if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }

@@ -27,6 +27,7 @@ const mockedVerifiedReceipt: InboxZeroMicrosoftCanaryReceipt = {
   grantedScopesEvidenceId: "scope-evidence-001",
   noSendEvidenceId: "no-send-evidence-001",
   graphReadbackEvidenceId: "graph-readback-evidence-001",
+  replayGraphReadbackEvidenceId: "replay-graph-readback-evidence-001",
 };
 
 describe("Microsoft draft-only canary receipt contract", () => {
