@@ -40,8 +40,10 @@ timestamps, commit SHA, service states, and pass/fail codes. Do not include
 secrets, OAuth tokens, mailbox data, cookies, or endpoint credentials in that
 receipt.
 
-`Mail.Send` remains disabled. The scripts reject non-local, non-emulator,
-non-test, and non-staging URLs so they cannot be used to inspect production.
+`Mail.Send` remains disabled. The preflight accepts only the documented local
+Microsoft emulator hosts. For non-loopback verification, `-BaseUrl` must
+exactly match the protected `COASTLINE_STAGING_BASE_URL`; hostname labels never
+grant access.
 The cron probe intentionally omits credentials and accepts only `401`; it
 cannot schedule or execute work.
 

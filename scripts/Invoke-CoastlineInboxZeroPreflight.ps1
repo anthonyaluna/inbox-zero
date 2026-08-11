@@ -27,6 +27,9 @@ $requiredVariables = @(
   "COASTLINE_DRAFT_PROPOSALS_ENABLED",
   "NEXT_PUBLIC_EMAIL_SEND_ENABLED"
 )
+if ($Mode -eq "Staging") {
+  $requiredVariables += "COASTLINE_STAGING_BASE_URL"
+}
 
 function Get-EnvironmentValues {
   param([string[]]$Names, [string[]]$Files)

@@ -41,6 +41,7 @@ exit `$LASTEXITCODE
 
     $LASTEXITCODE | Should Be 1
     ($output -join "`n") | Should Match "CRON_SECRET"
+    ($output -join "`n") | Should Match "COASTLINE_STAGING_BASE_URL"
     ($output -join "`n") | Should Not Match $sentinel
   }
 
@@ -96,13 +97,114 @@ exit `$LASTEXITCODE
 }
 
 Describe "Coastline Inbox Zero staging verification" {
-  It "rejects a production-like host that only contains the word staging" {
+  It "rejects a staging-labeled host that does not match the protected base URL" {
     $escapedScriptPath = $verificationScriptPath.Replace("'", "''")
+    $command = @"
+`$env:COASTLINE_STAGING_BASE_URL = 'https://approved-staging.example.test'
+& '$escapedScriptPath' -BaseUrl 'https://staging.example.invalid'
+exit `$LASTEXITCODE
+"@
 
-    $output = & pwsh -NoProfile -Command "& '$escapedScriptPath' -BaseUrl 'https://notstaging.example.com'; exit `$LASTEXITCODE" 2>&1
+    $output = & pwsh -NoProfile -Command $command 2>&1
 
     $LASTEXITCODE | Should Be 1
     ($output -join "`n") | Should Match "BaseUrl must be"
     ($output -join "`n") | Should Not Match "coastline_inbox_zero_staging_receipt"
+  }
+
+  It "writes only the sanitized receipt schema from controlled local responses" {
+    $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "coastline-staging-$([Guid]::NewGuid().ToString('N'))"
+    $fakeBin = Join-Path $testRoot "bin"
+    $outputPath = Join-Path $testRoot "receipt.json"
+    $readyPath = Join-Path $testRoot "ready"
+    New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
+
+    $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $portProbe.Start()
+    $port = $portProbe.LocalEndpoint.Port
+    $portProbe.Stop()
+
+    $serverJob = Start-Job -ScriptBlock {
+      param($Port, $ReadyPath)
+
+      $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+      $listener.Start()
+      Set-Content -LiteralPath $ReadyPath -Value "ready"
+      try {
+        foreach ($requestNumber in 1..2) {
+          $client = $listener.AcceptTcpClient()
+          try {
+            $stream = $client.GetStream()
+            $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII, $false, 1024, $true)
+            $requestLine = $reader.ReadLine()
+            while (-not [string]::IsNullOrEmpty($reader.ReadLine())) {}
+
+            if ($requestLine -match ' /api/health ') {
+              $status = "200 OK"
+              $body = '{"status":"ok","secret":"secret-sentinel","access_token":"token-sentinel","mailbox_body":"body-sentinel"}'
+            } else {
+              $status = "401 Unauthorized"
+              $body = 'body-sentinel'
+            }
+
+            $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+            $headers = "HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bodyBytes.Length)`r`nConnection: close`r`n`r`n"
+            $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($headers)
+            $stream.Write($headerBytes, 0, $headerBytes.Length)
+            $stream.Write($bodyBytes, 0, $bodyBytes.Length)
+            $stream.Flush()
+          } finally {
+            $client.Dispose()
+          }
+        }
+      } finally {
+        $listener.Stop()
+      }
+    } -ArgumentList $port, $readyPath
+
+    try {
+      for ($attempt = 0; $attempt -lt 50 -and -not (Test-Path -LiteralPath $readyPath); $attempt++) {
+        Start-Sleep -Milliseconds 50
+      }
+      Test-Path -LiteralPath $readyPath | Should Be $true
+
+      $dockerShim = Join-Path $fakeBin "docker.cmd"
+      @(
+        '@echo off'
+        'if "%1"=="version" (echo 29.6.1& exit /b 0)'
+        'if "%1"=="compose" (echo controlled-container-id& exit /b 0)'
+        'if "%1"=="inspect" (echo running& exit /b 0)'
+        'exit /b 1'
+      ) | Set-Content -LiteralPath $dockerShim -Encoding ascii
+
+      $escapedScriptPath = $verificationScriptPath.Replace("'", "''")
+      $escapedFakeBin = $fakeBin.Replace("'", "''")
+      $escapedOutputPath = $outputPath.Replace("'", "''")
+      $command = @"
+`$env:PATH = '$escapedFakeBin' + [System.IO.Path]::PathSeparator + `$env:PATH
+`$env:AUTH_SECRET = 'secret-sentinel'
+`$env:MICROSOFT_CLIENT_SECRET = 'token-sentinel'
+& '$escapedScriptPath' -BaseUrl 'http://127.0.0.1:$port' -OutputPath '$escapedOutputPath'
+exit `$LASTEXITCODE
+"@
+
+      $output = & pwsh -NoProfile -Command $command 2>&1
+
+      $LASTEXITCODE | Should Be 0
+      Test-Path -LiteralPath $outputPath | Should Be $true
+      $receiptText = Get-Content -LiteralPath $outputPath -Raw
+      $receipt = $receiptText | ConvertFrom-Json
+      (($receipt.PSObject.Properties.Name | Sort-Object) -join ",") | Should Be "checks,commit_sha,completed_at,outcome,schema_version,service_states,started_at"
+      (($receipt.service_states.PSObject.Properties.Name | Sort-Object) -join ",") | Should Be "cron_auth,redis,web,worker"
+      $receipt.outcome | Should Be "pass"
+      $receiptText | Should Not Match "secret-sentinel"
+      $receiptText | Should Not Match "token-sentinel"
+      $receiptText | Should Not Match "body-sentinel"
+      ($output -join "`n") | Should Not Match "secret-sentinel|token-sentinel|body-sentinel"
+    } finally {
+      Stop-Job -Job $serverJob -ErrorAction SilentlyContinue
+      Remove-Job -Job $serverJob -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
 }

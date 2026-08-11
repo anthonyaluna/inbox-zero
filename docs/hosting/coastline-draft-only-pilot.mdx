@@ -45,6 +45,7 @@ AUTH_SECRET=<protected secret>
 MICROSOFT_CLIENT_ID=<staging emulator client ID>
 MICROSOFT_CLIENT_SECRET=<protected staging emulator client secret>
 NEXT_PUBLIC_BASE_URL=https://inbox-zero-staging.example.test
+COASTLINE_STAGING_BASE_URL=https://inbox-zero-staging.example.test
 MICROSOFT_BASE_URL=http://microsoft-emulator:4003
 QUEUE_BACKEND=bullmq
 REDIS_URL=redis://redis:6379
@@ -57,6 +58,11 @@ NEXT_PUBLIC_EMAIL_SEND_ENABLED=false
 Coastline policy additionally rejects every non-draft mutation before it can
 reach a provider. Do not substitute a live Microsoft endpoint, enable send, or
 run the verification scripts against production.
+
+`COASTLINE_STAGING_BASE_URL` is a protected deployment value and must exactly
+match `-BaseUrl` for non-loopback verification. A hostname containing words
+such as `staging`, `test`, or `emulator` is not evidence that an endpoint is
+safe. Loopback is the only implicit local exception.
 
 From the staging host, run the preflight before releasing an artifact:
 

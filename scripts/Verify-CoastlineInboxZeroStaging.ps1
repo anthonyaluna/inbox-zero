@@ -13,23 +13,26 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 function Test-SafeStagingUrl {
   param([Uri]$Url)
 
-  if ($Url.Scheme -notin @("http", "https")) {
+  if ($Url.Scheme -notin @("http", "https") -or
+    -not [string]::IsNullOrEmpty($Url.UserInfo) -or
+    -not [string]::IsNullOrEmpty($Url.Query) -or
+    -not [string]::IsNullOrEmpty($Url.Fragment) -or
+    $Url.AbsolutePath -ne "/") {
     return $false
   }
 
-  $stagingHost = $Url.Host.ToLowerInvariant()
-  if ($stagingHost -in @("localhost", "127.0.0.1", "::1", "microsoft-emulator") -or
-    $stagingHost.EndsWith(".test")) {
+  if ($Url.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")) {
     return $true
   }
 
-  foreach ($label in $stagingHost.Split(".")) {
-    if ($label -eq "staging" -or $label.StartsWith("staging-") -or $label.EndsWith("-staging")) {
-      return $true
-    }
+  $protectedBaseUrlValue = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_BASE_URL")
+  $protectedBaseUrl = $null
+  if ([string]::IsNullOrWhiteSpace($protectedBaseUrlValue) -or
+    -not [Uri]::TryCreate($protectedBaseUrlValue, [UriKind]::Absolute, [ref]$protectedBaseUrl)) {
+    return $false
   }
 
-  return $false
+  return $Url.AbsoluteUri.TrimEnd("/") -ceq $protectedBaseUrl.AbsoluteUri.TrimEnd("/")
 }
 
 function Get-ServiceState {
@@ -52,9 +55,10 @@ function Get-ServiceState {
 }
 
 if (-not (Test-SafeStagingUrl -Url $BaseUrl)) {
-  throw "BaseUrl must be localhost, an emulator, a .test domain, or a staging host."
+  throw "BaseUrl must be loopback or exactly match the protected COASTLINE_STAGING_BASE_URL."
 }
 
+$startedAt = [DateTime]::UtcNow.ToString("o")
 $checks = [System.Collections.Generic.List[object]]::new()
 $services = [ordered]@{}
 $base = $BaseUrl.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
@@ -111,7 +115,8 @@ $commitSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
 $passed = @($checks | Where-Object { $_.status -eq "fail" }).Count -eq 0
 $receipt = [ordered]@{
   schema_version = "coastline_inbox_zero_staging_receipt.v1"
-  generated_at = [DateTime]::UtcNow.ToString("o")
+  started_at = $startedAt
+  completed_at = [DateTime]::UtcNow.ToString("o")
   commit_sha = $commitSha
   service_states = $services
   checks = $checks
