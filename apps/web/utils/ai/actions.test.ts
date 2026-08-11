@@ -107,6 +107,10 @@ describe("runActionFunction", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.deleteEmailActionEnabled = true;
+    mockEnv.autoDraftDisabled = false;
+    mockEnv.emailSendEnabled = true;
+    mockEnv.coastlineDraftProposalsEnabled = false;
     vi.mocked(prisma.executedAction.update).mockResolvedValue({});
     vi.mocked(getMessagingRuleNotificationResult).mockResolvedValue({
       delivered: true,
@@ -226,6 +230,39 @@ describe("runActionFunction", () => {
     expect(() =>
       parseInboxZeroDraftProposal((result as any).draftProposal),
     ).not.toThrow();
+  });
+
+  it("blocks Coastline-enabled Microsoft sends before provider mutation", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    await expect(
+      runActionFunction({
+        client,
+        email,
+        action: {
+          id: "action-1",
+          type: ActionType.SEND_EMAIL,
+          to: "recipient@example.com",
+          subject: "Property documents",
+          content: "Please find the requested documents attached.",
+        },
+        emailAccount,
+        executedRule: {
+          id: "executed-rule-1",
+          threadId: "thread-1",
+          emailAccountId: "account-1",
+          ruleId: "rule-1",
+        } as any,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+      actionType: ActionType.SEND_EMAIL,
+    });
+
+    expect(resolveDraftAttachments).not.toHaveBeenCalled();
+    expect(client.sendEmail).not.toHaveBeenCalled();
   });
 
   it("skips draft attachments when no selected attachments were persisted", async () => {

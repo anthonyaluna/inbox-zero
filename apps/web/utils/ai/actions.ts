@@ -38,6 +38,7 @@ import {
   createInboxZeroDraftProposalFromAction,
   parseInboxZeroDraftProposal,
 } from "@/utils/coastline/draft-proposal";
+import { assertCoastlineDraftOnlyAction } from "@/utils/coastline/draft-only-policy";
 import {
   buildReplyAllRecipients,
   mergeAndDedupeRecipients,
@@ -75,6 +76,15 @@ export const runActionFunction = async (options: {
     id: action.id,
   });
   log.trace("Running action", () => filterNullProperties(action));
+
+  assertCoastlineDraftOnlyAction({
+    actionType: action.type,
+    providerName: options.client.name,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    providerCapabilities: {
+      canDraftEmail: typeof options.client.draftEmail === "function",
+    },
+  });
 
   const { type, ...args } = action;
   const opts = {

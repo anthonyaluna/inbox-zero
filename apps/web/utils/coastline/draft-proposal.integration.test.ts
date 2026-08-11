@@ -1,9 +1,19 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { ActionType } from "@/generated/prisma/enums";
 import {
   createOutlookTestHarness,
   type OutlookTestHarness,
 } from "@/__tests__/integration/helpers";
+import { createTestLogger } from "@/__tests__/helpers";
+import { runActionFunction } from "@/utils/ai/actions";
 import { createInboxZeroDraftProposalFromAction } from "@/utils/coastline/draft-proposal";
+
+vi.mock("@/env", () => ({
+  env: {
+    COASTLINE_DRAFT_PROPOSALS_ENABLED: true,
+    NEXT_PUBLIC_AUTO_DRAFT_DISABLED: false,
+  },
+}));
 
 const RUN_INTEGRATION_TESTS = process.env.RUN_INTEGRATION_TESTS;
 const OUTLOOK_EMAIL = "coastline-fixture@outlook.example.com";
@@ -85,6 +95,67 @@ describe.skipIf(!RUN_INTEGRATION_TESTS)(
         "owner@example.com",
       );
       expect(readBack.body?.content).toContain(proposal.body_text);
+    });
+
+    test("does not send a Graph mutation for a prohibited Coastline action", async () => {
+      const source = await harness.provider.getMessage(
+        "coastline-source-message",
+      );
+      const graphRequests: Array<{ method: string; url: string }> = [];
+      const previousFetch = globalThis.fetch;
+
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : undefined;
+        graphRequests.push({
+          method: init?.method ?? request?.method ?? "GET",
+          url:
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url,
+        });
+        return previousFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        await expect(
+          runActionFunction({
+            client: harness.provider,
+            email: source!,
+            action: {
+              id: "coastline-prohibited-send",
+              type: ActionType.SEND_EMAIL,
+              to: "owner@example.com",
+              subject: "Lease packet request",
+              content: "This action must never reach Microsoft Graph.",
+            },
+            emailAccount: {
+              id: "coastline-account",
+              email: OUTLOOK_EMAIL,
+              userId: "coastline-user",
+            },
+            executedRule: {
+              id: "coastline-rule-run",
+              threadId: source!.threadId,
+              emailAccountId: "coastline-account",
+              ruleId: "coastline-rule",
+            } as any,
+            logger: createTestLogger(),
+          }),
+        ).rejects.toMatchObject({
+          code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+          actionType: ActionType.SEND_EMAIL,
+        });
+      } finally {
+        globalThis.fetch = previousFetch;
+      }
+
+      expect(
+        graphRequests.filter(({ method }) =>
+          ["POST", "PATCH", "PUT", "DELETE"].includes(method),
+        ),
+      ).toEqual([]);
     });
   },
 );
