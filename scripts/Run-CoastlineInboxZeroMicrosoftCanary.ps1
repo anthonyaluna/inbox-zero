@@ -267,7 +267,7 @@ try {
     $response.idempotencyDraftCount -eq 1
   if (-not $valid) { throw "Canary receipt values did not satisfy the independent-evidence contract." }
   foreach ($field in $expectedReceiptProperties) {
-    if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }
+    if ($field -notin @("schemaVersion", "provider", "action", "graphReadbackStatus", "noSendCapability", "idempotencyReplay", "terminalState", "generatedAt", "executorProvenanceSha256", "idempotencyDraftCount") -and -not (Test-OpaqueValue $response.$field 512)) { throw "Canary receipt contains an unsafe value." }
   }
   if ($response.executorProvenanceSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-IsoTimestamp $response.generatedAt)) { throw "Canary receipt contains an invalid hash or timestamp." }
 } catch {
