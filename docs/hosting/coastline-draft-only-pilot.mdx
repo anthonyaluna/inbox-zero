@@ -24,9 +24,59 @@ the account, thread, source message, model, confidence, idempotency key, and
 execution receipt fields needed for audit. Do not commit mailbox contents,
 OAuth tokens, cookies, or local exports.
 
-The pilot is local-only. Do not connect the shared AP mailbox or any production
-mailbox until a separate lane review confirms the Microsoft Graph identity,
-scope, target mailbox, rollback path, and terminal readback.
+The pilot is local-only by default. A reproducible staging environment is
+allowed only when it remains Microsoft draft-only and uses the emulator URL.
+Do not connect the shared AP mailbox or any production mailbox until a separate
+lane review confirms the Microsoft Graph identity, scope, target mailbox,
+rollback path, and terminal readback.
+
+## Staging contract
+
+Set the following protected environment values in staging; never commit their
+values or put them in a CI workflow. `MICROSOFT_BASE_URL` must resolve to
+`localhost` or the `microsoft-emulator` Docker service, not Microsoft Graph.
+`NEXT_PUBLIC_BASE_URL` is the staging origin; register
+`${NEXT_PUBLIC_BASE_URL}/api/outlook/linking/callback` as the Microsoft OAuth
+redirect URL.
+
+```text
+DATABASE_URL=<protected staging database URL>
+AUTH_SECRET=<protected secret>
+MICROSOFT_CLIENT_ID=<staging emulator client ID>
+MICROSOFT_CLIENT_SECRET=<protected staging emulator client secret>
+NEXT_PUBLIC_BASE_URL=https://inbox-zero-staging.example.test
+MICROSOFT_BASE_URL=http://microsoft-emulator:4003
+QUEUE_BACKEND=bullmq
+REDIS_URL=redis://redis:6379
+CRON_SECRET=<protected secret>
+COASTLINE_DRAFT_PROPOSALS_ENABLED=true
+NEXT_PUBLIC_EMAIL_SEND_ENABLED=false
+```
+
+`Mail.Send` is disabled by `NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`; the
+Coastline policy additionally rejects every non-draft mutation before it can
+reach a provider. Do not substitute a live Microsoft endpoint, enable send, or
+run the verification scripts against production.
+
+From the staging host, run the preflight before releasing an artifact:
+
+```powershell
+pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
+```
+
+After the app, worker, Redis queue, and cron container are running, verify the
+staging deployment and retain only the sanitized receipt:
+
+```powershell
+pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
+  -BaseUrl https://inbox-zero-staging.example.test `
+  -OutputPath C:\staging-receipts\inbox-zero-staging.json
+```
+
+The verification call performs an unauthenticated cron request and requires a
+`401` response. It never sends `CRON_SECRET`, so it cannot run a cron action.
+Require the protected `Coastline staging preflight` workflow to pass before
+publishing a staging artifact.
 
 ## Windows Omen startup
 

@@ -16,6 +16,40 @@ This guide complements the deployment guides with ongoing operational practices.
 
 Database migrations may not be reversible. Rolling the application image back does not automatically roll the database schema back.
 
+## Coastline draft-only staging gate
+
+For the Coastline Microsoft draft-only pilot, staging is a prerequisite to a
+release, not a production target. Use the existing Docker Compose web, worker,
+Redis, and cron services; do not introduce a separate deployment topology.
+Before a staging artifact is promoted, run:
+
+```powershell
+pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
+pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
+  -BaseUrl https://inbox-zero-staging.example.test `
+  -OutputPath C:\staging-receipts\inbox-zero-staging.json
+```
+
+The preflight fails closed unless the checkout is clean, Node 24 and pnpm 11
+are available, Docker reports a healthy PostgreSQL service and reachable Redis
+queue, required staging variable names are present, the Microsoft URL is an
+approved emulator URL, `QUEUE_BACKEND=bullmq` has a `REDIS_URL`,
+`COASTLINE_DRAFT_PROPOSALS_ENABLED=true`, and
+`NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`. The verification receipt contains only
+timestamps, commit SHA, service states, and pass/fail codes. Do not include
+secrets, OAuth tokens, mailbox data, cookies, or endpoint credentials in that
+receipt.
+
+`Mail.Send` remains disabled. The scripts reject non-local, non-emulator,
+non-test, and non-staging URLs so they cannot be used to inspect production.
+The cron probe intentionally omits credentials and accepts only `401`; it
+cannot schedule or execute work.
+
+The protected `Coastline staging preflight` workflow is the staging artifact
+publication gate. It must pass the web build, focused Coastline tests, full web
+test command, preflight, and `git diff --check`. Its staging values come only
+from the protected `coastline-inbox-zero-staging` environment.
+
 ## Database backups
 
 Back up PostgreSQL on a schedule appropriate for your recovery-point objective. Include:
