@@ -15,7 +15,7 @@ const CACHE_KEY_PREFIX = "label-counts";
 const CACHE_TTL_SECONDS = 60;
 const MAX_USER_LABELS = 100;
 
-type LabelCount = {
+export type LabelCount = {
   id: string;
   name: string;
   kind: "system" | "category" | "label";
