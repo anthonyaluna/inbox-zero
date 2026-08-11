@@ -1,0 +1,26 @@
+---
+title: Coastline local draft-only pilot
+description: Boundary contract for using Inbox Zero with Coastline's Microsoft 365 draft workflow.
+---
+
+# Coastline local draft-only pilot
+
+This fork is used for a single-user Omen evaluation. It may read and classify a
+Microsoft 365 mailbox and propose a reply draft. It must not send, delete,
+archive, mark messages read, move messages, change labels, unsubscribe, or
+create rules.
+
+Inbox Zero emits the versioned `inbox_zero_draft_proposal.v1` contract from
+`apps/web/utils/coastline/draft-proposal.ts`. The Coastline adapter validates
+that contract and maps it to the existing `outlook_draft_create` action. The
+adapter owns idempotency, execution receipts, exact target resolution, and
+independent read-after-write verification.
+
+The proposal body is transient pilot data. Durable records should retain only
+the account, thread, source message, model, confidence, idempotency key, and
+execution receipt fields needed for audit. Do not commit mailbox contents,
+OAuth tokens, cookies, or local exports.
+
+The pilot is local-only. Do not connect the shared AP mailbox or any production
+mailbox until a separate lane review confirms the Microsoft Graph identity,
+scope, target mailbox, rollback path, and terminal readback.
