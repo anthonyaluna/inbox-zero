@@ -24,3 +24,24 @@ OAuth tokens, cookies, or local exports.
 The pilot is local-only. Do not connect the shared AP mailbox or any production
 mailbox until a separate lane review confirms the Microsoft Graph identity,
 scope, target mailbox, rollback path, and terminal readback.
+
+## Windows Omen startup
+
+For the isolated Windows checkout, start the local services first:
+
+```powershell
+docker compose up -d db redis serverless-redis-http
+pnpm.cmd --filter inbox-zero-ai exec prisma generate
+pnpm.cmd --filter inbox-zero-ai exec prisma migrate deploy --schema prisma/schema.prisma
+```
+
+Start the emulators with the committed `emulate.config.yaml` seed, then start
+the web app with the local `.env.local` file. Use the local Ollama container or
+another explicitly configured development model for AI drafting. Verify
+`http://localhost:3000`, `http://localhost:3002/.well-known/openid-configuration`,
+and `http://localhost:3003/.well-known/openid-configuration` before testing the
+draft flow.
+
+On Windows, use `pnpm.cmd` for child processes. The upstream development
+helper currently assumes a Unix `pnpm` shim and a local `psql` binary, so the
+direct commands above avoid those two host-specific startup failures.
