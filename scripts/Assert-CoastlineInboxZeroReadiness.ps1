@@ -125,6 +125,22 @@ function Test-OpaqueEvidenceId {
     $text -ceq $text.Trim() -and $text -notmatch '[\r\n]'
 }
 
+function Test-ReviewerIdentities {
+  param([object]$Value)
+  if ($null -eq $Value) { return $false }
+  $reviewers = @($Value)
+  if ($reviewers.Count -eq 0) { return $false }
+  $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($reviewer in $reviewers) {
+    if ($reviewer -isnot [string] -or -not (Test-OpaqueEvidenceId $reviewer 256)) { return $false }
+    foreach ($character in $reviewer.ToCharArray()) {
+      if ([char]::IsControl($character)) { return $false }
+    }
+    if (-not $seen.Add($reviewer)) { return $false }
+  }
+  return $true
+}
+
 $actualSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualSha -notmatch '^[a-f0-9]{40}$' -or $actualSha -cne $ExpectedSha) {
   Add-Evidence -Id "current_sha" -Status "fail" -ReasonCode "CURRENT_SHA_MISMATCH"
@@ -213,7 +229,7 @@ if (-not $environmentEvidence.supplied) {
     (Get-PropertyValue $environment "environment") -ceq "coastline-inbox-zero-staging" -and
     (Get-PropertyValue $environment "deployment_branch_rule") -ceq "refs/heads/main" -and
     (Get-PropertyValue $environment "protected_sha") -ceq $ExpectedSha -and
-    @(Get-PropertyValue $environment "required_reviewers").Count -gt 0 -and
+    (Test-ReviewerIdentities (Get-PropertyValue $environment "required_reviewers")) -and
     (Get-PropertyValue $environment "prevent_self_review") -eq $true -and
     (Test-ExactSet @(Get-PropertyValue $environment "configured_secret_names") $requiredSecretNames) -and
     (Test-ExactSet @(Get-PropertyValue $environment "configured_variable_names") $requiredVariableNames)
@@ -403,7 +419,7 @@ if (-not $reviewEvidence.supplied) {
     (Get-PropertyValue $review "commit_sha") -ceq $ExpectedSha -and
     (Get-PropertyValue $review "base_branch") -ceq "main" -and
     (Get-PropertyValue $review "review_state") -ceq "approved" -and
-    @(Get-PropertyValue $review "approving_reviewers").Count -gt 0) {
+    (Test-ReviewerIdentities (Get-PropertyValue $review "approving_reviewers"))) {
     Add-Evidence -Id "pr_review" -Status "pass"
   } else {
     Add-Evidence -Id "pr_review" -Status "fail" -ReasonCode "PR_REVIEW_INVALID"

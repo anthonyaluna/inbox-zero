@@ -37,7 +37,7 @@ With no out-of-repository receipt paths supplied, the expected result is
 | Build | pass at `9e7b9d034` | `LOCAL_BUILD_RESULT_MISSING` | Task 4 ran `build:ci`; the final Task 5 current-SHA local receipt remains outside Git. |
 | Full unit suite | pending current-SHA receipt | `LOCAL_FULL_TEST_RESULT_MISSING` | No current sanitized receipt is committed. Exact counts must come from the final command output, never an older document. |
 | Integration suite | pending current-SHA receipt | `LOCAL_INTEGRATION_RESULT_MISSING` | No current sanitized receipt is committed. |
-| Pester suite | 32 passed, 0 failed | `LOCAL_PESTER_RESULT_MISSING` | Current Task 5 fix-round run on 2026-08-12; a post-commit current-SHA receipt still remains outside Git. |
+| Pester suite | 42 passed, 0 failed | `LOCAL_PESTER_RESULT_MISSING` | Current Task 5 fix-round run on 2026-08-12; a post-commit current-SHA receipt still remains outside Git. |
 | Server-action check | pending current-SHA receipt | `LOCAL_CHECK_SERVER_ACTIONS_RESULT_MISSING` | Required as its own matrix row. |
 | Client-redirect check | pending current-SHA receipt | `LOCAL_CHECK_CLIENT_REDIRECTS_RESULT_MISSING` | Required as its own matrix row. |
 | Test-fixture check | pending current-SHA receipt | `LOCAL_CHECK_TEST_FIXTURES_RESULT_MISSING` | Required as its own matrix row. |

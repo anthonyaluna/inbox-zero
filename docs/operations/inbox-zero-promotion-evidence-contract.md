@@ -42,7 +42,9 @@ Configure this in GitHub before Task 6; workflow text alone is insufficient.
 - Required reviewers: at least one designated staging reviewer must be
   configured, and self-review must be prevented. Reviewer identities are
   recorded only in the protected-environment receipt. They are `Pending` until
-  independently read back from GitHub Environment configuration.
+  independently read back from GitHub Environment configuration. Every identity
+  must be a non-empty bounded string, exactly trimmed, free of control characters,
+  and unique without regard to case.
 - Required environment secrets:
   `COASTLINE_INBOX_ZERO_STAGING_DATABASE_URL`,
   `COASTLINE_INBOX_ZERO_STAGING_AUTH_SECRET`,
@@ -136,7 +138,9 @@ produce `ready`.
 
 `coastline_inbox_zero_pr_review_receipt.v1` is current-SHA evidence with
 `base_branch: main`, `review_state: approved`, and at least one approving
-reviewer. A local review note or unreviewed pull request does not satisfy it.
+reviewer. Approving reviewer identities follow the same non-empty, bounded,
+trimmed, control-free, case-insensitive uniqueness contract as environment
+reviewers. A local review note or unreviewed pull request does not satisfy it.
 
 ## Invocation
 

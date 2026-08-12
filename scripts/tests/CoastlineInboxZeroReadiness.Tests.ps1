@@ -238,6 +238,50 @@ Describe "Coastline Inbox Zero promotion readiness" {
     } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
 
+  foreach ($invalidReviewerCase in @(
+    [pscustomobject]@{ name = "empty"; values = @("staging-reviewer", "") },
+    [pscustomobject]@{ name = "whitespace-only"; values = @("staging-reviewer", "   ") },
+    [pscustomobject]@{ name = "untrimmed"; values = @(" staging-reviewer") },
+    [pscustomobject]@{ name = "control-character"; values = @("staging`treviewer") },
+    [pscustomobject]@{ name = "duplicate"; values = @("staging-reviewer", "STAGING-REVIEWER") }
+  )) {
+    It "blocks protected environment evidence with $($invalidReviewerCase.name) reviewer identities" {
+      $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+      New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+      try {
+        $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+        $environment = Get-Content -LiteralPath $paths.environment -Raw | ConvertFrom-Json
+        $environment.required_reviewers = @($invalidReviewerCase.values)
+        Write-TestJson $paths.environment $environment
+        $record = Invoke-TestReadiness $paths $currentSha
+        $record.state | Should Be "blocked"
+        @($record.evidence_matrix | Where-Object id -eq "protected_environment").status | Should Be "fail"
+      } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+  }
+
+  foreach ($invalidReviewerCase in @(
+    [pscustomobject]@{ name = "empty"; values = @("reviewer", "") },
+    [pscustomobject]@{ name = "whitespace-only"; values = @("reviewer", "`t") },
+    [pscustomobject]@{ name = "untrimmed"; values = @("reviewer ") },
+    [pscustomobject]@{ name = "control-character"; values = @("review`ter") },
+    [pscustomobject]@{ name = "duplicate"; values = @("reviewer", "REVIEWER") }
+  )) {
+    It "blocks PR review evidence with $($invalidReviewerCase.name) reviewer identities" {
+      $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+      New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+      try {
+        $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+        $review = Get-Content -LiteralPath $paths.review -Raw | ConvertFrom-Json
+        $review.approving_reviewers = @($invalidReviewerCase.values)
+        Write-TestJson $paths.review $review
+        $record = Invoke-TestReadiness $paths $currentSha
+        $record.state | Should Be "blocked"
+        @($record.evidence_matrix | Where-Object id -eq "pr_review").status | Should Be "fail"
+      } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+  }
+
   It "rejects a truncated remote staging receipt" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
