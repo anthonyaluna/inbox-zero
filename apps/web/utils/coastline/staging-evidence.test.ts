@@ -116,8 +116,29 @@ describe("createCoastlineRemoteStagingEvidence", () => {
     );
   });
 
+  it("rejects a web-static worker record without worker-owned runtime provenance", () => {
+    expect(() =>
+      createValidEvidence({
+        workerRegistrations: [
+          Object.assign(runningWorker(), {
+            attestationId: "d".repeat(64),
+            attestationSource: "web_static_config",
+          }),
+        ],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "COASTLINE_STAGING_WORKER_RUNTIME_BINDING_INVALID",
+      }),
+    );
+  });
+
   it("accepts the unnamed identity emitted by the deployed BullMQ worker", () => {
     const unnamedWorker = {
+      schemaVersion:
+        "coastline_inbox_zero_worker_runtime_binding.v1" as const,
+      attestationSource: "coastline_worker_runtime" as const,
+      attestationId: "d".repeat(64),
       identity: "bull:YXV0b21hdGlvbi1qb2Jz",
       queueIdentity: "bullmq:automation-jobs",
       status: "running" as const,
@@ -152,9 +173,10 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           queueName: "automation-jobs",
           waitUntilReady: () => never,
           getWorkers: async () => [],
+          getWorkerRuntimeBinding: async () => null,
           close: async () => undefined,
         }),
-        workerRegistrations: [runningWorker()],
+        readWorkerRuntimeBindings: async () => [runningWorker()],
       }),
     ).rejects.toMatchObject({
       code: "COASTLINE_STAGING_QUEUE_UNREACHABLE",
@@ -175,12 +197,41 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           { name: "bull:b3RoZXItcXVldWU=:w:worker-x" },
           { name: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1" },
         ],
+          getWorkerRuntimeBinding: async () => null,
           close: async () => undefined,
         }),
-        workerRegistrations: [runningWorker()],
+        readWorkerRuntimeBindings: async () => [runningWorker()],
     });
 
     expect(runtime.workerRegistrations).toEqual([runningWorker()]);
+  });
+
+  it("rejects a connected worker with no worker-owned runtime binding", async () => {
+    const runtime = await readCoastlineStagingRuntimeBinding({
+      queueName: "automation-jobs",
+      protectedArtifactSha: PROTECTED_SHA,
+      deployedArtifactSha: PROTECTED_SHA,
+      createQueueRuntime: () => ({
+        queueName: "automation-jobs",
+        waitUntilReady: async () => undefined,
+        getWorkers: async () => [
+          { name: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1" },
+        ],
+        getWorkerRuntimeBinding: async () => null,
+        close: async () => undefined,
+      }),
+    });
+
+    expect(() =>
+      createCoastlineRemoteStagingEvidence({
+        runNonce: createCoastlineStagingRunNonce(NOW, "a".repeat(20)),
+        cronEvidenceId: "b".repeat(64),
+        observedAt: NOW,
+        ...runtime,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "COASTLINE_STAGING_WORKER_STOPPED" }),
+    );
   });
 
   it("discovers the unnamed identity emitted by the deployed BullMQ worker", async () => {
@@ -196,9 +247,14 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           { name: "bull:b3RoZXItcXVldWU=" },
           { name: "bull:YXV0b21hdGlvbi1qb2Jz" },
         ],
+          getWorkerRuntimeBinding: async () => null,
           close: async () => undefined,
         }),
-        workerRegistrations: [{
+        readWorkerRuntimeBindings: async () => [{
+          schemaVersion:
+            "coastline_inbox_zero_worker_runtime_binding.v1" as const,
+          attestationSource: "coastline_worker_runtime" as const,
+          attestationId: "d".repeat(64),
           identity: "bull:YXV0b21hdGlvbi1qb2Jz",
           queueIdentity: "bullmq:automation-jobs",
           status: "running",
@@ -209,6 +265,9 @@ describe("createCoastlineRemoteStagingEvidence", () => {
 
     expect(runtime.workerRegistrations).toEqual([
       {
+        schemaVersion: "coastline_inbox_zero_worker_runtime_binding.v1",
+        attestationSource: "coastline_worker_runtime",
+        attestationId: "d".repeat(64),
         identity: "bull:YXV0b21hdGlvbi1qb2Jz",
         queueIdentity: "bullmq:automation-jobs",
         status: "running",
@@ -239,6 +298,9 @@ function createValidEvidence(
 
 function runningWorker() {
   return {
+    schemaVersion: "coastline_inbox_zero_worker_runtime_binding.v1" as const,
+    attestationSource: "coastline_worker_runtime" as const,
+    attestationId: "d".repeat(64),
     identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
     queueIdentity: "bullmq:automation-jobs",
     status: "running" as const,

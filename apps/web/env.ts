@@ -99,7 +99,6 @@ const parsedEnv = createEnv({
       .string()
       .regex(/^[a-f0-9]{40}$/)
       .optional(),
-    COASTLINE_STAGING_WORKER_REGISTRATION_JSON: z.string().optional(),
     APPLE_CLIENT_ID: z.string().optional(),
     APPLE_TEAM_ID: z.string().optional(),
     APPLE_KEY_ID: z.string().optional(),

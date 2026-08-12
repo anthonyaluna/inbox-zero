@@ -38,6 +38,19 @@ put their values in Git, CI logs, receipts, shell history, or this runbook.
 - `COASTLINE_DRAFT_PROPOSALS_ENABLED=true`.
 - `NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`.
 
+The worker, not the web process, publishes the runtime binding that backs the
+staging evidence endpoint. The deployed worker must receive the same protected
+artifact SHA through `COASTLINE_WORKER_ARTIFACT_SHA`,
+`COASTLINE_STAGING_ARTIFACT_SHA`, or
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA`, and a deployment-unique
+`COASTLINE_WORKER_RUNTIME_INSTANCE_ID` (or a safe hostname). On `ready` and at
+least every 30 seconds, it writes a 120-second, sanitized runtime binding for
+each named BullMQ worker. The binding contains only schema version, the fixed
+worker-owned source, opaque attestation ID, deterministic BullMQ client
+identity, queue identity, running state, artifact SHA, and heartbeat timestamp.
+The web route accepts a binding only when that identity is currently returned by
+BullMQ. It never reads a web environment JSON record as worker proof.
+
 The approved Microsoft app registration must be dedicated to staging, bind its
 redirect URI to the exact staging hostname, have documented tenant/client ID
 and secret expiry in the protected deployment system, and have no `Mail.Send`
@@ -106,6 +119,27 @@ status; scope identity; idempotency key; no-send capability; replay result; and
 timestamp. It contains no mailbox body, subject, recipient name, OAuth value,
 token, or cookie. Receipts remain private runtime evidence and are excluded
 from Git.
+
+The raw canary receipt is not promotion evidence by itself. Retain the remote
+staging receipt, runner provenance record, dedicated-mailbox evidence, raw
+canary receipt, and replay evidence outside Git, then create the exact composite
+bundle consumed by readiness:
+
+```powershell
+pwsh -File scripts/Assemble-CoastlineInboxZeroPromotionCanaryEvidence.ps1 `
+  -ExpectedSha <protected SHA> `
+  -RemoteStagingReceiptPath <outside-Git staging receipt> `
+  -RunnerProvenancePath <outside-Git runner provenance> `
+  -DedicatedMailboxEvidencePath <outside-Git dedicated-mailbox evidence> `
+  -CanaryReceiptPath <outside-Git raw canary receipt> `
+  -ReplayReceiptPath <outside-Git replay evidence> `
+  -OutputPath <new outside-Git promotion canary bundle>
+```
+
+The assembler accepts only the exact schemas, current SHA, one nonce and run ID,
+the worker heartbeat and four passing remote checks, and ordered timestamps. It
+rejects mailbox body, subject, recipient, and credential-like fields. Pass its
+output as `-CanaryReceiptPath` to `Assert-CoastlineInboxZeroReadiness.ps1`.
 
 `created_verified` is the only passing terminal state: Graph readback is
 verified, `Mail.Send` is absent, both Graph readbacks bind to the created draft,

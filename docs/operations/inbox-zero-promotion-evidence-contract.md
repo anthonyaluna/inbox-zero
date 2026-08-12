@@ -106,6 +106,16 @@ healthy service states, all four named checks passing, and `outcome: pass`.
 Loopback and local Docker receipts are marked `local_diagnostic`; the readiness
 checker rejects them even if their diagnostic checks pass.
 
+The remote worker proof is a worker-owned Redis runtime binding, never a static
+web environment record. A deployed named BullMQ worker writes
+`coastline_inbox_zero_worker_runtime_binding.v1` at a deterministic key derived
+from its BullMQ client identity, using the fixed
+`attestationSource: coastline_worker_runtime`, an opaque attestation ID, exact
+queue identity, current artifact SHA, `running`, and a 120-second heartbeat.
+The web verifier independently confirms the corresponding client is presently
+reported by BullMQ before using the binding. Missing, stale, malformed,
+web-static, artifact-mismatched, or queue-mismatched bindings fail closed.
+
 Promotion consumes an exact composite
 `coastline_inbox_zero_promotion_canary_evidence.v1` bundle assembled and retained
 outside Git from the protected runner and independent verifier outputs. Its

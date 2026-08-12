@@ -159,6 +159,9 @@ function request(runNonce?: string, authenticated = false) {
 
 function runningWorker() {
   return {
+    schemaVersion: "coastline_inbox_zero_worker_runtime_binding.v1" as const,
+    attestationSource: "coastline_worker_runtime" as const,
+    attestationId: "d".repeat(64),
     identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
     queueIdentity: "bullmq:automation-jobs",
     status: "running" as const,

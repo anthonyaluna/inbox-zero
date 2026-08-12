@@ -11,7 +11,10 @@ const NONCE_MAX_AGE_MS = 5 * 60_000;
 const NONCE_FUTURE_TOLERANCE_MS = 30_000;
 const DEFAULT_RUNTIME_TIMEOUT_MS = 5000;
 
-type CoastlineWorkerRegistration = {
+export type CoastlineWorkerRuntimeBinding = {
+  schemaVersion: "coastline_inbox_zero_worker_runtime_binding.v1";
+  attestationSource: "coastline_worker_runtime";
+  attestationId: string;
   identity: string;
   queueIdentity: string;
   status: "running" | "stopped";
@@ -23,6 +26,7 @@ type CoastlineQueueRuntime = {
   queueName: string;
   waitUntilReady: () => Promise<unknown>;
   getWorkers: () => Promise<Array<{ name?: string }>>;
+  getWorkerRuntimeBinding: (identity: string) => Promise<string | null>;
   close: () => Promise<void>;
 };
 
@@ -31,7 +35,7 @@ export type CoastlineStagingRuntimeBinding = {
   protectedArtifactSha: string | undefined;
   queueIdentity: string;
   queueReachable: boolean;
-  workerRegistrations: CoastlineWorkerRegistration[];
+  workerRegistrations: CoastlineWorkerRuntimeBinding[];
 };
 
 export class CoastlineStagingEvidenceError extends Error {
@@ -127,6 +131,7 @@ export function createCoastlineRemoteStagingEvidence({
   const workerIdentity = workerRegistrations
     .filter(
       (registration) =>
+        isWorkerOwnedRuntimeBinding(registration) &&
         registration.queueIdentity === queueIdentity &&
         registration.status === "running" &&
         registration.artifactSha === protectedArtifactSha &&
@@ -144,7 +149,9 @@ export function createCoastlineRemoteStagingEvidence({
     );
     throw new CoastlineStagingEvidenceError(
       queueWorker
-        ? "COASTLINE_STAGING_WORKER_ARTIFACT_MISMATCH"
+        ? isWorkerOwnedRuntimeBinding(queueWorker)
+          ? "COASTLINE_STAGING_WORKER_ARTIFACT_MISMATCH"
+          : "COASTLINE_STAGING_WORKER_RUNTIME_BINDING_INVALID"
         : "COASTLINE_STAGING_WORKER_STOPPED",
       503,
     );
@@ -165,6 +172,17 @@ export function createCoastlineRemoteStagingEvidence({
     workerIdentity,
     workerStatus: "running" as const,
   };
+}
+
+function isWorkerOwnedRuntimeBinding(
+  registration: CoastlineWorkerRuntimeBinding,
+) {
+  return (
+    registration.schemaVersion ===
+      "coastline_inbox_zero_worker_runtime_binding.v1" &&
+    registration.attestationSource === "coastline_worker_runtime" &&
+    /^[a-f0-9]{64}$/.test(registration.attestationId)
+  );
 }
 
 function isFreshWorkerHeartbeat(heartbeatAt: string, observedAt: Date) {
@@ -195,14 +213,17 @@ export async function readCoastlineStagingRuntimeBinding({
   deployedArtifactSha = env.COASTLINE_DEPLOYED_ARTIFACT_SHA,
   timeoutMs = DEFAULT_RUNTIME_TIMEOUT_MS,
   createQueueRuntime = createBullMqRuntime,
-  workerRegistrations = readCoastlineWorkerRegistrations(),
+  readWorkerRuntimeBindings,
 }: {
   queueName?: string;
   protectedArtifactSha?: string;
   deployedArtifactSha?: string;
   timeoutMs?: number;
   createQueueRuntime?: (queueName: string) => CoastlineQueueRuntime;
-  workerRegistrations?: CoastlineWorkerRegistration[];
+  readWorkerRuntimeBindings?: (
+    workerIdentities: string[],
+    queueIdentity: string,
+  ) => Promise<CoastlineWorkerRuntimeBinding[]>;
 } = {}): Promise<CoastlineStagingRuntimeBinding> {
   if (!queueName) {
     throw new CoastlineStagingEvidenceError(
@@ -226,6 +247,17 @@ export async function readCoastlineStagingRuntimeBinding({
           isQueueWorkerIdentity(identity, queueIdentity),
       )
     const connectedWorkerSet = new Set(connectedWorkerIdentities);
+    const workerRegistrations = await withRuntimeTimeout(
+      () =>
+        readWorkerRuntimeBindings
+          ? readWorkerRuntimeBindings(connectedWorkerIdentities, queueIdentity)
+          : readDeployedWorkerRuntimeBindings(
+              queue,
+              connectedWorkerIdentities,
+              queueIdentity,
+            ),
+      timeoutMs,
+    );
 
     return {
       protectedArtifactSha,
@@ -246,24 +278,57 @@ export async function readCoastlineStagingRuntimeBinding({
   }
 }
 
-function readCoastlineWorkerRegistrations(): CoastlineWorkerRegistration[] {
-  const raw = env.COASTLINE_STAGING_WORKER_REGISTRATION_JSON;
-  if (!raw) return [];
+const WORKER_RUNTIME_BINDING_KEY_PREFIX =
+  "coastline:inbox-zero:worker-runtime-binding:v1:";
+
+async function readDeployedWorkerRuntimeBindings(
+  queue: CoastlineQueueRuntime,
+  workerIdentities: string[],
+  queueIdentity: string,
+): Promise<CoastlineWorkerRuntimeBinding[]> {
+  const bindings = await Promise.all(
+    workerIdentities.map(async (identity) => {
+      const raw = await queue.getWorkerRuntimeBinding(identity);
+      return parseWorkerRuntimeBinding(raw, identity, queueIdentity);
+    }),
+  );
+  return bindings.filter(
+    (binding): binding is CoastlineWorkerRuntimeBinding => binding !== null,
+  );
+}
+
+function parseWorkerRuntimeBinding(
+  raw: string | null,
+  expectedIdentity: string,
+  expectedQueueIdentity: string,
+): CoastlineWorkerRuntimeBinding | null {
+  if (!raw) return null;
   try {
-    const registrations = JSON.parse(raw);
-    if (!Array.isArray(registrations)) return [];
-    return registrations.filter(
-      (registration): registration is CoastlineWorkerRegistration =>
-        typeof registration === "object" &&
-        registration !== null &&
-        typeof registration.identity === "string" &&
-        typeof registration.queueIdentity === "string" &&
-        (registration.status === "running" || registration.status === "stopped") &&
-        typeof registration.artifactSha === "string" &&
-        typeof registration.heartbeatAt === "string",
-    );
+    const binding = JSON.parse(raw) as CoastlineWorkerRuntimeBinding;
+    const expectedProperties = [
+      "schemaVersion",
+      "attestationSource",
+      "attestationId",
+      "identity",
+      "queueIdentity",
+      "status",
+      "artifactSha",
+      "heartbeatAt",
+    ];
+    if (
+      typeof binding !== "object" ||
+      binding === null ||
+      Object.keys(binding).sort().join("|") !==
+        expectedProperties.sort().join("|") ||
+      binding.identity !== expectedIdentity ||
+      binding.queueIdentity !== expectedQueueIdentity ||
+      !isWorkerOwnedRuntimeBinding(binding)
+    ) {
+      return null;
+    }
+    return binding;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -288,6 +353,10 @@ function createBullMqRuntime(queueName: string): CoastlineQueueRuntime {
     queueName: queue.name,
     waitUntilReady: () => queue.waitUntilReady(),
     getWorkers: () => queue.getWorkers(),
+    getWorkerRuntimeBinding: (identity) =>
+      connection.get(
+        `${WORKER_RUNTIME_BINDING_KEY_PREFIX}${encodeURIComponent(identity)}`,
+      ),
     close: async () => {
       await queue.close();
       if (connection.status !== "end") connection.disconnect();

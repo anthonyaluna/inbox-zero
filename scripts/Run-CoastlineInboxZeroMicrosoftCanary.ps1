@@ -346,13 +346,23 @@ try {
 }
 
 try {
-  $stagingEvidence = Get-ProtectedEvidenceFile -Path $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH -ExpectedHash $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 -ExpectedProperties @("schema_version", "provenance", "is_loopback", "run_nonce", "started_at", "completed_at", "artifact_sha", "worker_artifact_sha", "remote_worker_identity", "remote_queue_identity", "cron_evidence_id", "service_states", "checks", "outcome") -Label "Remote staging evidence"
+  $stagingEvidence = Get-ProtectedEvidenceFile -Path $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH -ExpectedHash $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 -ExpectedProperties @("schema_version", "provenance", "is_loopback", "run_nonce", "started_at", "completed_at", "artifact_sha", "worker_artifact_sha", "worker_heartbeat_at", "remote_worker_identity", "remote_queue_identity", "cron_evidence_id", "service_states", "checks", "outcome") -Label "Remote staging evidence"
+  $expectedStagingChecks = @("WEB_HEALTH", "CRON_UNAUTHENTICATED_REJECTED", "CRON_AUTHENTICATED_SUCCESS", "REMOTE_ARTIFACT_WORKER_QUEUE")
+  $stagingChecks = @($stagingEvidence.checks)
+  $validStagingChecks = $stagingChecks.Count -eq 4 -and
+    ((@($stagingChecks | ForEach-Object { $_.code } | Sort-Object) -join "|") -ceq (($expectedStagingChecks | Sort-Object) -join "|")) -and
+    @($stagingChecks | Where-Object {
+      -not (($_.PSObject.Properties.Name | Sort-Object) -join "|" -ceq ((@("code", "status") | Sort-Object) -join "|")) -or $_.status -cne "pass"
+    }).Count -eq 0
   $validStagingEvidence = $stagingEvidence.schema_version -ceq "coastline_inbox_zero_staging_receipt.v2" -and $stagingEvidence.provenance -ceq "remote_https" -and
     $stagingEvidence.is_loopback -eq $false -and $stagingEvidence.run_nonce -ceq $runNonce -and
     $stagingEvidence.artifact_sha -ceq $currentSha -and $stagingEvidence.worker_artifact_sha -ceq $currentSha -and
     $stagingEvidence.outcome -ceq "pass" -and $stagingEvidence.cron_evidence_id -match '^[a-f0-9]{64}$' -and
     -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_worker_identity) -and -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_queue_identity) -and
-    (Test-FreshEvidenceTimestamp $stagingEvidence.completed_at)
+    (Test-FreshEvidenceTimestamp $stagingEvidence.completed_at) -and (Test-FreshEvidenceTimestamp $stagingEvidence.worker_heartbeat_at) -and
+    $stagingEvidence.service_states.web -ceq "healthy" -and $stagingEvidence.service_states.worker -ceq "running" -and
+    $stagingEvidence.service_states.queue -ceq "reachable" -and $stagingEvidence.service_states.cron_unauthenticated -ceq "rejected" -and
+    $stagingEvidence.service_states.cron_authenticated -ceq "verified" -and $validStagingChecks
   if (-not $validStagingEvidence) { throw "Remote staging evidence is not a fresh nonce-bound immutable worker-artifact receipt." }
 } catch {
   Stop-Canary -Code "COASTLINE_CANARY_STAGING_EVIDENCE_INVALID" -Message "Fresh nonce-bound remote staging evidence is required before external contact."
