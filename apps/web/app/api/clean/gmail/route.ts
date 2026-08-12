@@ -11,6 +11,7 @@ import { CleanAction } from "@/generated/prisma/enums";
 import { updateThread } from "@/utils/redis/clean";
 import { withQstashOrInternal } from "@/utils/qstash";
 import { assertCleanerApiEnabled } from "@/utils/cleaner-feature";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const cleanGmailSchema = z.object({
   emailAccountId: z.string(),
@@ -138,19 +139,22 @@ async function saveToDatabase({
   });
 }
 
-export const POST = withError(
-  "clean/gmail",
-  withQstashOrInternal(async (request: RequestWithLogger) => {
-    assertCleanerApiEnabled();
+export const POST = withCoastlineMutationGuard(
+  { surface: "clean/gmail", mutation: "CLEAN_GMAIL_LABEL_THREAD" },
+  withError(
+    "clean/gmail",
+    withQstashOrInternal(async (request: RequestWithLogger) => {
+      assertCleanerApiEnabled();
 
-    const json = await request.json();
-    const body = cleanGmailSchema.parse(json);
+      const json = await request.json();
+      const body = cleanGmailSchema.parse(json);
 
-    await performGmailAction({
-      ...body,
-      logger: request.logger,
-    });
+      await performGmailAction({
+        ...body,
+        logger: request.logger,
+      });
 
-    return NextResponse.json({ success: true });
-  }),
+      return NextResponse.json({ success: true });
+    }),
+  ),
 );

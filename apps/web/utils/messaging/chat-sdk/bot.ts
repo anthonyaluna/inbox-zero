@@ -27,6 +27,7 @@ import {
 } from "chat";
 import { load } from "cheerio";
 import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 import type { Prisma } from "@/generated/prisma/client";
 import {
   ActionType,
@@ -973,6 +974,11 @@ async function handlePendingEmailConfirmAction({
   });
 
   try {
+    assertCoastlineMutationAllowed({
+      surface: "messaging-chat-sdk/confirm-email-action",
+      mutation: "CONFIRM_ASSISTANT_EMAIL_ACTION",
+      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    });
     const confirmation = await confirmAssistantEmailActionForAccount({
       chatId,
       chatMessageId: pendingAction.chatMessageId,

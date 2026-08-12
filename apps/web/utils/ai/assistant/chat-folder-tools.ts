@@ -4,6 +4,8 @@ import { createEmailProvider } from "@/utils/email/provider";
 import type { Logger } from "@/utils/logger";
 import { FOLDER_SEPARATOR, type OutlookFolder } from "@/utils/outlook/folders";
 import { posthogCaptureEvent } from "@/utils/posthog";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 type FolderToolOptions = {
   email: string;
@@ -77,6 +79,12 @@ export const createOrGetFolderTool = ({
     execute: async ({ name }) => {
       trackToolCall({ tool: "create_or_get_folder", email, logger });
 
+      assertCoastlineMutationAllowed({
+        surface: "assistant-chat/create-or-get-folder",
+        mutation: "CREATE_MAIL_FOLDER",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
+
       try {
         const emailProvider = await createEmailProvider({
           emailAccountId,
@@ -145,6 +153,12 @@ export const moveThreadsToFolderTool = ({
     }),
     execute: async ({ threadIds, folderName }) => {
       trackToolCall({ tool: "move_threads_to_folder", email, logger });
+
+      assertCoastlineMutationAllowed({
+        surface: "assistant-chat/move-threads-to-folder",
+        mutation: "MOVE_THREAD_TO_FOLDER",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
 
       try {
         const emailProvider = await createEmailProvider({

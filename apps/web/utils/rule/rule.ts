@@ -33,10 +33,20 @@ import {
 } from "@/utils/rule-action-feature-gates";
 import { hasWebhookAction } from "@/utils/webhook-action";
 import { assertNoSenderOnlyOverlap } from "@/utils/rule/sender-scope-overlap";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 type CreateRuleEnablement =
   | { source: "default" }
   | { source: "chat"; chatRiskConfirmed?: boolean };
+
+function assertRuleMutationAllowed(mutation: string) {
+  assertCoastlineMutationAllowed({
+    surface: "rule/core",
+    mutation,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
+}
 
 export type RuleActionCreateData = Omit<
   Prisma.ActionCreateManyRuleInput,
@@ -241,6 +251,7 @@ export async function createRuleWithResolvedActions({
   actions: RuleActionCreateData[];
   skipSenderOnlyOverlapCheck?: boolean;
 }): Promise<RuleWithRelations> {
+  assertRuleMutationAllowed("CREATE_RULE");
   assertRuleActionsEnabled(actions);
 
   if (!skipSenderOnlyOverlapCheck) {
@@ -293,6 +304,7 @@ export async function replaceRuleWithResolvedActions({
   data: RuleRecordData;
   actions: RuleActionCreateData[];
 }): Promise<RuleWithRelations> {
+  assertRuleMutationAllowed("REPLACE_RULE");
   const existingRule = await prisma.rule.findUnique({
     where: { id: ruleId, emailAccountId },
     select: {
@@ -368,6 +380,7 @@ export async function createRule({
   logger: Logger;
   enablement?: CreateRuleEnablement;
 }) {
+  assertRuleMutationAllowed("CREATE_RULE");
   try {
     logger.info("Creating rule", {
       name: result.name,
@@ -448,6 +461,7 @@ export async function updateRule({
   logger: Logger;
   runOnThreads?: boolean;
 }) {
+  assertRuleMutationAllowed("UPDATE_RULE");
   try {
     logger.info("Updating rule", {
       name: result.name,
@@ -509,6 +523,7 @@ export async function upsertSystemRule({
   enabled: boolean;
   logger: Logger;
 }) {
+  assertRuleMutationAllowed("UPSERT_SYSTEM_RULE");
   logger.info("Upserting system rule", { name, systemType });
 
   const existingRule = await prisma.rule.findFirst({
@@ -595,6 +610,7 @@ export async function updateRuleActions({
   emailAccountId: string;
   logger: Logger;
 }) {
+  assertRuleMutationAllowed("UPDATE_RULE_ACTIONS");
   const existingRule = await prisma.rule.findFirst({
     where: { id: ruleId, emailAccountId },
     select: {
@@ -649,6 +665,7 @@ export async function deleteRule({
   ruleId: string;
   groupId?: string | null;
 }) {
+  assertRuleMutationAllowed("DELETE_RULE");
   if (groupId) {
     const deletedGroups = await prisma.group.deleteMany({
       where: { id: groupId, emailAccountId },

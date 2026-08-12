@@ -11,6 +11,8 @@ import {
   confirmAssistantEmailActionForAccount,
   confirmAssistantSaveMemoryForAccount,
 } from "./assistant-chat-confirmation";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 export const confirmAssistantEmailAction = actionClient
   .metadata({ name: "confirmAssistantEmail" })
@@ -25,8 +27,13 @@ export const confirmAssistantEmailAction = actionClient
         actionType,
         contentOverride,
       },
-    }) =>
-      confirmAssistantEmailActionForAccount({
+    }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/confirm-assistant-email",
+        mutation: "CONFIRM_ASSISTANT_EMAIL_ACTION",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
+      return confirmAssistantEmailActionForAccount({
         chatId,
         chatMessageId,
         toolCallId,
@@ -36,7 +43,8 @@ export const confirmAssistantEmailAction = actionClient
         emailAccountId,
         provider,
         logger,
-      }),
+      });
+    },
   );
 
 export const confirmAssistantCreateRule = actionClient
@@ -46,8 +54,13 @@ export const confirmAssistantCreateRule = actionClient
     async ({
       ctx: { emailAccountId, provider, logger },
       parsedInput: { chatId, chatMessageId, toolCallId },
-    }) =>
-      confirmAssistantCreateRuleForAccount({
+    }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/confirm-assistant-create-rule",
+        mutation: "CONFIRM_ASSISTANT_CREATE_RULE",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
+      return confirmAssistantCreateRuleForAccount({
         chatId,
         chatMessageId,
         toolCallId,
@@ -55,7 +68,8 @@ export const confirmAssistantCreateRule = actionClient
         emailAccountId,
         provider,
         logger,
-      }),
+      });
+    },
   );
 
 export const confirmAssistantSaveMemory = actionClient

@@ -4,6 +4,8 @@ import { createEmailProvider } from "@/utils/email/provider";
 import { isDraftUnmodified } from "@/utils/ai/choose-rule/draft-management";
 import type { Logger } from "@/utils/logger";
 import { DEFAULT_AI_DRAFT_CLEANUP_DAYS } from "@/utils/ai/draft-cleanup-settings";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 export async function cleanupAIDraftsForAccount({
   emailAccountId,
@@ -140,6 +142,11 @@ export async function cleanupConfiguredAIDrafts({
 }: {
   logger: Logger;
 }) {
+  assertCoastlineMutationAllowed({
+    surface: "ai/draft-cleanup",
+    mutation: "DELETE_AI_DRAFT",
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
   const emailAccounts = await prisma.emailAccount.findMany({
     where: {
       draftCleanupDays: { not: null },

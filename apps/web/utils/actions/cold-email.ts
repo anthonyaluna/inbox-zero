@@ -15,6 +15,8 @@ import { getColdEmailRule } from "@/utils/cold-email/cold-email-rule";
 import { internalDateToDate } from "@/utils/date";
 import { saveLearnedPattern } from "@/utils/rule/learned-patterns";
 import { emailToContentForAI } from "@/utils/ai/content-sanitizer";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 export const markNotColdEmailAction = actionClient
   .metadata({ name: "markNotColdEmail" })
@@ -24,6 +26,11 @@ export const markNotColdEmailAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { sender },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/mark-not-cold-email",
+        mutation: "REMOVE_COLD_EMAIL_LABEL",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       const [emailProvider, coldEmailRule] = await Promise.all([
         createEmailProvider({
           emailAccountId,

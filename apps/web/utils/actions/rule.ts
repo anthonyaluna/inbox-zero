@@ -58,6 +58,15 @@ import { getEmailAccountForRuleExecution } from "@/utils/user/get";
 import type { AttachmentSourceInput } from "@/utils/attachments/source-schema";
 import { assertCanUseDigestsIfNeeded } from "@/utils/premium/server";
 import { toCreateOrUpdateRuleCondition } from "@/utils/rule/create-rule-condition";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
+
+function assertRuleServerActionAllowed(mutation: string) {
+  assertCoastlineMutationAllowed({
+    surface: "server-action/rule",
+    mutation,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
+}
 
 export const createRuleAction = actionClient
   .metadata({ name: "createRule" })
@@ -73,6 +82,7 @@ export const createRuleAction = actionClient
         conditionalOperator,
       },
     }) => {
+      assertRuleServerActionAllowed("CREATE_RULE");
       await assertCanUseDigestsIfNeeded(userId, actions ?? []);
 
       const conditions = flattenConditions(conditionsInput, logger);
@@ -127,6 +137,7 @@ export const updateRuleAction = actionClient
         conditionalOperator,
       },
     }) => {
+      assertRuleServerActionAllowed("UPDATE_RULE");
       await assertRuleIsNotOrgManaged({ ruleId: id, emailAccountId });
 
       await assertCanUseDigestsIfNeeded(userId, actions);
@@ -284,6 +295,7 @@ export const deleteRuleAction = actionClient
   .metadata({ name: "deleteRule" })
   .inputSchema(deleteRuleBody)
   .action(async ({ ctx: { emailAccountId }, parsedInput: { id } }) => {
+    assertRuleServerActionAllowed("DELETE_RULE");
     const rule = await prisma.rule.findUnique({
       where: {
         id_emailAccountId: {

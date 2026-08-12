@@ -3,14 +3,18 @@ import { confirmAssistantEmailActionForAccount } from "@/utils/actions/assistant
 import { confirmAssistantEmailActionBody } from "@/utils/actions/assistant-chat.validation";
 import { withEmailAccount } from "@/utils/middleware";
 import { getEmailAccountWithAi } from "@/utils/user/get";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export const maxDuration = 120;
 const MOBILE_PENDING_ACTION_PERSIST_WAIT_MS = 10_000;
 
 // Mobile clients call this endpoint directly; web uses the server action path.
-export const POST = withEmailAccount(
-  "chat/confirm-email-action",
-  async (request) => {
+export const POST = withCoastlineMutationGuard(
+  {
+    surface: "chat/confirm-email-action",
+    mutation: "CONFIRM_ASSISTANT_EMAIL_ACTION",
+  },
+  withEmailAccount("chat/confirm-email-action", async (request) => {
     const emailAccountId = request.auth.emailAccountId;
 
     const user = await getEmailAccountWithAi({ emailAccountId });
@@ -44,5 +48,5 @@ export const POST = withEmailAccount(
     });
 
     return NextResponse.json(result);
-  },
+  }),
 );

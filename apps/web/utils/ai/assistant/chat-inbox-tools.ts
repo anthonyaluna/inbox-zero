@@ -4,6 +4,8 @@ import type { Logger } from "@/utils/logger";
 import prisma from "@/utils/prisma";
 import { posthogCaptureEvent } from "@/utils/posthog";
 import { createEmailProvider } from "@/utils/email/provider";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 import { isGoogleProvider } from "@/utils/email/provider-types";
 import {
   extractEmailAddress,
@@ -1063,6 +1065,12 @@ const buildManageInboxTool = ({
       );
       const { action, labelName, originalAction } = parsedInput;
       const isSenderAction = requiresSenderEmails(action);
+
+      assertCoastlineMutationAllowed({
+        surface: "assistant-chat/manage-inbox",
+        mutation: `MANAGE_INBOX_${action.toUpperCase()}`,
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
 
       try {
         const emailProvider = await createEmailProvider({
