@@ -65,6 +65,8 @@ function New-CompleteReadinessEvidence {
     started_at = $now.AddMinutes(-5).ToString("o")
     completed_at = $now.AddMinutes(-4).ToString("o")
     artifact_sha = $Sha
+    worker_artifact_sha = $Sha
+    worker_heartbeat_at = $now.AddMinutes(-4).ToString("o")
     remote_worker_identity = "bull:aW5ib3gtemVybw"
     remote_queue_identity = "inbox-zero"
     cron_evidence_id = "b" * 64
@@ -150,8 +152,20 @@ function New-CompleteReadinessEvidence {
     }
   })
   Write-TestJson $paths.rollback ([ordered]@{
-    schema_version = "coastline_inbox_zero_rollback_receipt.v1"; commit_sha = $Sha; outcome = "pass"
-    draft_action_unavailable = $true; existing_draft_untouched = $true; no_mailbox_delete = $true
+    schema_version = "coastline_inbox_zero_rollback_receipt.v2"
+    artifact_sha = $Sha
+    run_id = $runId
+    run_nonce = $runNonce
+    started_at = $now.AddSeconds(-30).ToString("o")
+    completed_at = $now.AddSeconds(-15).ToString("o")
+    remote_staging_evidence_id = "b" * 64
+    canary_evidence_id = "graph-evidence-001"
+    replay_evidence_id = "replay-evidence-001"
+    rollback_evidence_id = "rollback-evidence-001"
+    outcome = "pass"
+    draft_action_unavailable = $true
+    existing_draft_untouched = $true
+    no_mailbox_delete = $true
   })
   Write-TestJson $paths.review ([ordered]@{
     schema_version = "coastline_inbox_zero_pr_review_receipt.v1"; commit_sha = $Sha
@@ -375,6 +389,55 @@ Describe "Coastline Inbox Zero promotion readiness" {
       $record = Invoke-TestReadiness $paths $currentSha
       $record.state | Should Be "blocked"
       (@($record.reason_codes) -contains "GRAPH_CANARY_RECEIPT_INVALID") | Should Be $true
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
+  It "rejects a minimal rollback receipt even when it names the current SHA" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    try {
+      $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+      Write-TestJson $paths.rollback ([ordered]@{
+        schema_version = "coastline_inbox_zero_rollback_receipt.v1"
+        commit_sha = $currentSha
+        outcome = "pass"
+        draft_action_unavailable = $true
+        existing_draft_untouched = $true
+        no_mailbox_delete = $true
+      })
+      $record = Invoke-TestReadiness $paths $currentSha
+      $record.state | Should Be "blocked"
+      @($record.evidence_matrix | Where-Object id -eq "rollback").status | Should Be "fail"
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
+  It "rejects rollback evidence outside the shared promotion nonce and timestamp order" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    try {
+      $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+      $rollback = Get-Content -LiteralPath $paths.rollback -Raw | ConvertFrom-Json
+      $rollback.run_nonce = "ffffffffffffffffffffffffffffffff"
+      $rollback.started_at = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("o")
+      $rollback.completed_at = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString("o")
+      Write-TestJson $paths.rollback $rollback
+      $record = Invoke-TestReadiness $paths $currentSha
+      $record.state | Should Be "blocked"
+      @($record.evidence_matrix | Where-Object id -eq "rollback").status | Should Be "fail"
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
+  It "rejects remote staging evidence without the current worker artifact and heartbeat" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    try {
+      $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+      $staging = Get-Content -LiteralPath $paths.staging -Raw | ConvertFrom-Json
+      $staging.worker_artifact_sha = "f" * 40
+      Write-TestJson $paths.staging $staging
+      $record = Invoke-TestReadiness $paths $currentSha
+      $record.state | Should Be "blocked"
+      @($record.evidence_matrix | Where-Object id -eq "remote_staging").status | Should Be "fail"
     } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
 

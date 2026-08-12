@@ -240,6 +240,10 @@ if (-not $environmentEvidence.supplied) {
   }
 }
 
+$stagingValid = $false
+$stagingRunNonce = $null
+$stagingCompletedAt = $null
+$stagingCronEvidenceId = $null
 $stagingEvidence = Get-EvidenceFile -Path $RemoteStagingReceiptPath
 if (-not $stagingEvidence.supplied) {
   Add-Evidence -Id "remote_staging" -Status "missing" -ReasonCode "REMOTE_STAGING_RECEIPT_MISSING"
@@ -247,7 +251,8 @@ if (-not $stagingEvidence.supplied) {
   $staging = $stagingEvidence.value
   $expectedStagingProperties = @(
     "schema_version", "provenance", "is_loopback", "run_nonce", "started_at",
-    "completed_at", "artifact_sha", "remote_worker_identity", "remote_queue_identity",
+    "completed_at", "artifact_sha", "worker_artifact_sha", "worker_heartbeat_at",
+    "remote_worker_identity", "remote_queue_identity",
     "cron_evidence_id", "service_states", "checks", "outcome"
   )
   $expectedServiceProperties = @("web", "worker", "queue", "cron_unauthenticated", "cron_authenticated")
@@ -261,6 +266,8 @@ if (-not $stagingEvidence.supplied) {
     (Get-PropertyValue $staging "run_nonce") -match '^[a-f0-9]{32}$' -and
     (Test-FreshWindow (Get-PropertyValue $staging "started_at") (Get-PropertyValue $staging "completed_at")) -and
     (Get-PropertyValue $staging "artifact_sha") -ceq $ExpectedSha -and
+    (Get-PropertyValue $staging "worker_artifact_sha") -ceq $ExpectedSha -and
+    (Test-BoundedEvidenceTimestamp (Get-PropertyValue $staging "worker_heartbeat_at") (Get-EvidenceTimestamp (Get-PropertyValue $staging "started_at")) (Get-EvidenceTimestamp (Get-PropertyValue $staging "completed_at"))) -and
     (Test-OpaqueEvidenceId (Get-PropertyValue $staging "remote_worker_identity")) -and
     (Test-OpaqueEvidenceId (Get-PropertyValue $staging "remote_queue_identity")) -and
     (Get-PropertyValue $staging "cron_evidence_id") -match '^[a-f0-9]{64}$' -and
@@ -275,12 +282,22 @@ if (-not $stagingEvidence.supplied) {
     @($stagingChecks | Where-Object { -not (Test-ExactProperties $_ @("code", "status")) -or (Get-PropertyValue $_ "status") -cne "pass" }).Count -eq 0 -and
     (Get-PropertyValue $staging "outcome") -ceq "pass"
   if ($stagingValid) {
+    $stagingRunNonce = Get-PropertyValue $staging "run_nonce"
+    $stagingCompletedAt = Get-EvidenceTimestamp (Get-PropertyValue $staging "completed_at")
+    $stagingCronEvidenceId = Get-PropertyValue $staging "cron_evidence_id"
     Add-Evidence -Id "remote_staging" -Status "pass"
   } else {
     Add-Evidence -Id "remote_staging" -Status "fail" -ReasonCode "REMOTE_STAGING_RECEIPT_INVALID"
   }
 }
 
+$canaryValid = $false
+$replayValid = $false
+$runId = $null
+$runNonce = $null
+$completedAt = $null
+$canary = $null
+$replay = $null
 $canaryEvidence = Get-EvidenceFile -Path $CanaryReceiptPath
 if (-not $canaryEvidence.supplied) {
   Add-Evidence -Id "dedicated_mailbox" -Status "missing" -ReasonCode "DEDICATED_MAILBOX_EVIDENCE_MISSING"
@@ -307,6 +324,7 @@ if (-not $canaryEvidence.supplied) {
     (Get-PropertyValue $bundle "artifact_sha") -ceq $ExpectedSha -and
     (Test-OpaqueEvidenceId $runId 256) -and $runNonce -match '^[a-f0-9]{32}$' -and
     (Test-FreshWindow (Get-PropertyValue $bundle "started_at") (Get-PropertyValue $bundle "completed_at")) -and
+    ((-not $stagingEvidence.supplied) -or ($stagingValid -and $stagingRunNonce -ceq $runNonce -and $stagingCompletedAt -le $startedAt)) -and
     (Test-ExactProperties $runner $expectedRunnerProperties) -and
     (Get-PropertyValue $runner "schema_version") -ceq "coastline_inbox_zero_canary_runner_provenance.v1" -and
     (Get-PropertyValue $runner "artifact_sha") -ceq $ExpectedSha -and
@@ -396,9 +414,30 @@ if (-not $rollbackEvidence.supplied) {
   Add-Evidence -Id "rollback" -Status "missing" -ReasonCode "ROLLBACK_RESULT_MISSING"
 } else {
   $rollback = $rollbackEvidence.value
-  if ($rollbackEvidence.valid -and
-    (Get-PropertyValue $rollback "schema_version") -ceq "coastline_inbox_zero_rollback_receipt.v1" -and
-    (Get-PropertyValue $rollback "commit_sha") -ceq $ExpectedSha -and
+  $rollbackStartedAt = Get-EvidenceTimestamp (Get-PropertyValue $rollback "started_at")
+  $rollbackCompletedAt = Get-EvidenceTimestamp (Get-PropertyValue $rollback "completed_at")
+  $expectedRollbackProperties = @(
+    "schema_version", "artifact_sha", "run_id", "run_nonce", "started_at", "completed_at",
+    "remote_staging_evidence_id", "canary_evidence_id", "replay_evidence_id",
+    "rollback_evidence_id", "outcome", "draft_action_unavailable",
+    "existing_draft_untouched", "no_mailbox_delete"
+  )
+  if ($rollbackEvidence.valid -and $stagingValid -and $canaryValid -and $replayValid -and
+    (Test-ExactProperties $rollback $expectedRollbackProperties) -and
+    (Get-PropertyValue $rollback "schema_version") -ceq "coastline_inbox_zero_rollback_receipt.v2" -and
+    (Get-PropertyValue $rollback "artifact_sha") -ceq $ExpectedSha -and
+    (Get-PropertyValue $rollback "run_id") -ceq $runId -and
+    (Get-PropertyValue $rollback "run_nonce") -ceq $stagingRunNonce -and
+    (Get-PropertyValue $rollback "run_nonce") -ceq $runNonce -and
+    (Test-FreshWindow (Get-PropertyValue $rollback "started_at") (Get-PropertyValue $rollback "completed_at")) -and
+    $rollbackStartedAt -ge $completedAt -and
+    (Test-OpaqueEvidenceId (Get-PropertyValue $rollback "remote_staging_evidence_id")) -and
+    (Get-PropertyValue $rollback "remote_staging_evidence_id") -ceq $stagingCronEvidenceId -and
+    (Test-OpaqueEvidenceId (Get-PropertyValue $rollback "canary_evidence_id")) -and
+    (Get-PropertyValue $rollback "canary_evidence_id") -ceq (Get-PropertyValue $canary "graphReadbackEvidenceId") -and
+    (Test-OpaqueEvidenceId (Get-PropertyValue $rollback "replay_evidence_id")) -and
+    (Get-PropertyValue $rollback "replay_evidence_id") -ceq (Get-PropertyValue $replay "replay_graph_readback_evidence_id") -and
+    (Test-OpaqueEvidenceId (Get-PropertyValue $rollback "rollback_evidence_id")) -and
     (Get-PropertyValue $rollback "outcome") -ceq "pass" -and
     (Get-PropertyValue $rollback "draft_action_unavailable") -eq $true -and
     (Get-PropertyValue $rollback "existing_draft_untouched") -eq $true -and
