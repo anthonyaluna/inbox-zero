@@ -230,6 +230,8 @@ describe("runActionFunction", () => {
         ],
       }),
       emailAccount.email,
+      undefined,
+      undefined,
     );
   });
 
@@ -398,6 +400,8 @@ describe("runActionFunction", () => {
         attachments: [],
       }),
       emailAccount.email,
+      undefined,
+      undefined,
     );
   });
 
