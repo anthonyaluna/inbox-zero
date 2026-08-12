@@ -37,7 +37,10 @@ With no out-of-repository receipt paths supplied, the expected result is
 | Build | pass at `9e7b9d034` | `LOCAL_BUILD_RESULT_MISSING` | Task 4 ran `build:ci`; the final Task 5 current-SHA local receipt remains outside Git. |
 | Full unit suite | pending current-SHA receipt | `LOCAL_FULL_TEST_RESULT_MISSING` | No current sanitized receipt is committed. Exact counts must come from the final command output, never an older document. |
 | Integration suite | pending current-SHA receipt | `LOCAL_INTEGRATION_RESULT_MISSING` | No current sanitized receipt is committed. |
-| Pester suite | 18 passed, 0 failed | `LOCAL_PESTER_RESULT_MISSING` | Current Task 5 run on 2026-08-12; a current-SHA receipt still remains outside Git. |
+| Pester suite | 32 passed, 0 failed | `LOCAL_PESTER_RESULT_MISSING` | Current Task 5 fix-round run on 2026-08-12; a post-commit current-SHA receipt still remains outside Git. |
+| Server-action check | pending current-SHA receipt | `LOCAL_CHECK_SERVER_ACTIONS_RESULT_MISSING` | Required as its own matrix row. |
+| Client-redirect check | pending current-SHA receipt | `LOCAL_CHECK_CLIENT_REDIRECTS_RESULT_MISSING` | Required as its own matrix row. |
+| Test-fixture check | pending current-SHA receipt | `LOCAL_CHECK_TEST_FIXTURES_RESULT_MISSING` | Required as its own matrix row. |
 | Protected environment | missing | `PROTECTED_ENVIRONMENT_EVIDENCE_MISSING` | Workflow YAML cannot prove GitHub Environment reviewer or branch protection. |
 | Remote staging receipt | missing | `REMOTE_STAGING_RECEIPT_MISSING` | No remote endpoint was contacted. |
 | Dedicated mailbox | missing | `DEDICATED_MAILBOX_EVIDENCE_MISSING` | No mailbox identity was supplied or contacted. |
@@ -46,7 +49,8 @@ With no out-of-repository receipt paths supplied, the expected result is
 | Rollback | missing | `ROLLBACK_RESULT_MISSING` | The staging flag was not changed and no deployment was rolled back. |
 | PR review | missing | `PR_REVIEW_MISSING` | No branch was pushed and no pull request was opened or reviewed. |
 
-The exact post-fix counts belong in the sanitized local validation receipt
+The exact post-fix counts and all three named code-check results belong in the
+sanitized local validation receipt
 defined by
 [`inbox-zero-promotion-evidence-contract.md`](inbox-zero-promotion-evidence-contract.md).
 That receipt is tied to one full commit SHA and remains outside Git. The checker

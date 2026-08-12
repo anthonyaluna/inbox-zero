@@ -151,6 +151,8 @@ Describe "Coastline Inbox Zero staging verification" {
       $receipt = $receiptText | ConvertFrom-Json
       if ($failure) { $serverLog = Receive-Job $serverJob -Keep 2>&1 | Out-String; throw "Verification failed: $failure Server: $serverLog Receipt: $receiptText" }
       $receipt.schema_version | Should Be "coastline_inbox_zero_staging_receipt.v2"
+      $receipt.provenance | Should Be "local_diagnostic"
+      $receipt.is_loopback | Should Be $true
       $nonceIssuedAt = [DateTimeOffset]::FromUnixTimeMilliseconds(
         [Convert]::ToInt64($receipt.run_nonce.Substring(0, 12), 16)
       )

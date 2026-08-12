@@ -13,7 +13,8 @@ commit SHA supplied with `-ExpectedSha` and read back from the local checkout.
 ## Required matrix
 
 The ordered `evidence_matrix` contains `current_sha`, `build`, `full_test`,
-`integration`, `pester`, `protected_environment`, `remote_staging`,
+`integration`, `pester`, `check_server_actions`, `check_client_redirects`,
+`check_test_fixtures`, `protected_environment`, `remote_staging`,
 `dedicated_mailbox`, `canary`, `replay`, `rollback`, and `pr_review`. Each row is
 `pass`, `missing`, or `fail` and includes a stable `reason_code` when it is not a
 pass. Exact full-suite and Pester counts are copied from the current-SHA local
@@ -73,33 +74,59 @@ All paths supplied to the checker must resolve outside the repository.
 | `full_test` | `pnpm.cmd --filter inbox-zero-ai test -- --run` | passed/skipped files and tests |
 | `integration` | `pnpm.cmd --filter inbox-zero-ai test-integration` | passed files and tests |
 | `pester` | `Invoke-Pester -Script scripts/tests -PassThru` | passed tests |
+| `check_server_actions` | `pnpm.cmd --filter inbox-zero-ai run check-server-actions` | none |
+| `check_client_redirects` | `pnpm.cmd --filter inbox-zero-ai run check-client-redirects` | none |
+| `check_test_fixtures` | `pnpm.cmd --filter inbox-zero-ai run check-test-fixtures` | none |
 
 Each result has `outcome: pass`. A failed command must be represented as failed
-evidence; do not omit or relabel it. The separate server-action,
-client-redirect, and fixture checks remain mandatory validation commands and
-must be reported alongside the receipt even though they are not promotion
-matrix count rows.
+evidence; do not omit or relabel it. All seven local results must be present and
+bound to the same current `commit_sha`; no subset is promotion evidence.
 
 ### Protected environment
 
 `coastline_inbox_zero_protected_environment_receipt.v1` contains `commit_sha`,
 the exact environment and branch rule, `protected_sha`, non-empty
 `required_reviewers`, `prevent_self_review: true`, and exactly the configured
-secret names above. It contains no values.
+secret and variable names above. `configured_variable_names` must contain exactly
+`COASTLINE_INBOX_ZERO_STAGING_BASE_URL`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL`, and
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA`. It contains no values.
 
 ### Remote staging and Microsoft canary
 
-The remote verifier produces `coastline_inbox_zero_staging_receipt.v2`. It must
-have `outcome: pass` and `artifact_sha` equal to the current SHA. A loopback or
-local Docker receipt is diagnostic only and must not be supplied as remote
-staging evidence.
+The remote verifier produces exact schema
+`coastline_inbox_zero_staging_receipt.v2`. Promotion requires
+`provenance: remote_https`, `is_loopback: false`, a fresh bounded and ordered
+start/completion window, a valid run nonce, the current artifact SHA, opaque
+remote worker and queue identities, the authenticated cron evidence ID, exact
+healthy service states, all four named checks passing, and `outcome: pass`.
+Loopback and local Docker receipts are marked `local_diagnostic`; the readiness
+checker rejects them even if their diagnostic checks pass.
 
-The protected canary runner produces
-`inbox_zero_microsoft_canary_receipt.v1`. It must show independent Graph readback
-`verified`, terminal state `created_verified`, `Mail.Send_absent`, a reconciled
-or duplicate-prevented replay, and numeric `idempotencyDraftCount: 1`. This
-schema is accepted as dedicated-mailbox evidence only because the runner fails
-before execution unless its protected dedicated-mailbox prerequisites pass.
+Promotion consumes an exact composite
+`coastline_inbox_zero_promotion_canary_evidence.v1` bundle assembled and retained
+outside Git from the protected runner and independent verifier outputs. Its
+outer record binds `artifact_sha`, one `run_id`, one `run_nonce`, and a fresh,
+ordered start/completion window. The exact nested records are:
+
+- `runner_provenance`: current artifact SHA, matching run identity, executor
+  registration ID and SHA-256, executor ID, and independent verifier ID.
+- `dedicated_mailbox`: current artifact and run identity, bounded verification
+  timestamp, hashed mailbox identity, matching connected account and identity
+  evidence, `staging`, `dedicated_non_production_canary`, and explicit false
+  values for shared and production mailbox flags.
+- `canary`: the complete `inbox_zero_microsoft_canary_receipt.v1` property set,
+  matching runner registration and mailbox identity evidence, exact delegated
+  scope identity, verified Graph readback, `Mail.Send_absent`,
+  `created_verified`, and numeric exact-one-draft evidence.
+- `replay`: current artifact and matching run identity, bounded timestamp,
+  `created_verified`, and the same idempotency key, draft ID, replay evidence,
+  no-duplicate evidence, and numeric draft count as the canary.
+
+Truncated raw canary receipts, stale timestamps, mismatched run IDs/nonces,
+mismatched artifact identities, incomplete runner provenance, and unproved
+dedicated mailbox status are blocked evidence. A three-field fixture can never
+produce `ready`.
 
 ### Rollback and pull-request review
 

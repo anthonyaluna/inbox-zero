@@ -120,8 +120,10 @@ requires `/api/coastline/staging-evidence` to return the current timestamped
 nonce, protected artifact SHA, matching cron evidence ID, a running registered
 worker, and a reachable deployed queue. A missing endpoint, mismatch, stale
 nonce, or unavailable runtime produces a failed receipt. A loopback, local
-Docker, or emulator pass is local diagnostic evidence only and is never a
-staging pass.
+Docker, or emulator pass is emitted with `provenance=local_diagnostic` and
+`is_loopback=true` when applicable. It is local diagnostic evidence only and is
+never a staging pass. Promotion accepts only a fresh exact receipt marked
+`provenance=remote_https` and `is_loopback=false` for the protected SHA.
 
 ## Windows Omen startup
 

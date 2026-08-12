@@ -36,6 +36,7 @@ if ($protectedSha -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($c
 }
 
 $started = [DateTimeOffset]::UtcNow
+$isLoopback = $BaseUrl.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")
 $nonceEntropy = [Guid]::NewGuid().ToString("N").Substring(0, 20)
 $runNonce = $started.ToUnixTimeMilliseconds().ToString("x12") + $nonceEntropy
 $base = $BaseUrl.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
@@ -106,6 +107,8 @@ try {
 $passed = @($checks | Where-Object status -eq "fail").Count -eq 0
 $receipt = [ordered]@{
   schema_version = "coastline_inbox_zero_staging_receipt.v2"
+  provenance = if ($isLoopback) { "local_diagnostic" } else { "remote_https" }
+  is_loopback = $isLoopback
   run_nonce = $runNonce
   started_at = $started.ToString("o")
   completed_at = [DateTimeOffset]::UtcNow.ToString("o")
