@@ -473,6 +473,59 @@ describe("executeAct", () => {
     });
   });
 
+  it("rejects a Coastline receipt when its proposal does not match the executing message", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "different-thread",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject",
+        body_text: "Body",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "different-thread",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "different-thread",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/different-thread/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: "2026-08-11T12:00:01.000Z",
+        terminalState: "created_verified",
+      },
+    });
+
+    await expect(
+      executeAct({
+        client: mockClient,
+        executedRule: {
+          ...baseExecutedRule,
+          actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+        } as any,
+        message,
+        emailAccount,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_PROPOSAL_CONTEXT_MISMATCH",
+    });
+  });
+
   it("does not report APPLIED when persisting the final status fails", async () => {
     mockRunActionFunction.mockResolvedValueOnce({ success: true });
     mockExecutedRuleUpdate.mockRejectedValueOnce(new Error("db unavailable"));

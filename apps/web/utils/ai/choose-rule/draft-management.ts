@@ -12,21 +12,18 @@ import {
   type InboxZeroDraftProposal,
   type InboxZeroDraftReceipt,
 } from "@/utils/coastline/draft-proposal";
+import {
+  markRecoveryRequired,
+  recordCoastlineDraftCreation,
+  reconcileCoastlineDraft,
+  reserveOrReconcileCoastlineDraft,
+} from "@/utils/coastline/draft-reservation";
 
 const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
 const RECEIPT_PERSISTENCE_ERROR_CODE =
   "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED";
 const DRAFT_RECOVERY_ERROR_CODE = "COASTLINE_DRAFT_RECOVERY_REQUIRED";
 const DRAFT_READBACK_ERROR_CODE = "COASTLINE_DRAFT_READBACK_FAILED";
-
-type CoastlineDraftReservation = {
-  schemaVersion: "inbox_zero_draft_reservation.v1";
-  idempotencyKey: string;
-  accountId: string;
-  threadId: string;
-  sourceMessageId: string;
-  reservedAt: string;
-};
 
 export type PreviousDraftHandlingResult =
   | {
@@ -203,12 +200,33 @@ export async function createOrReconcileCoastlineDraft({
   createDraft: () => Promise<{ draftId: string }>;
   logger: Logger;
 }): Promise<{ draftId: string; receipt: InboxZeroDraftReceipt }> {
-  const reservation = await reserveCoastlineDraft({ actionId, proposal });
+  const reservation = await reserveOrReconcileCoastlineDraft({
+    actionId,
+    proposal,
+    client,
+  });
+  if (reservation.state === "recovery_required") {
+    throw createDraftRecoveryError(
+      "Draft idempotency reservation is awaiting recovery by its creator",
+    );
+  }
   let draftId = reservation.draftId;
 
   if (!draftId) {
     const createdDraft = await createDraft();
     draftId = createdDraft.draftId;
+    try {
+      await recordCoastlineDraftCreation({
+        reservationId: reservation.reservationId,
+        draftId,
+      });
+    } catch (error) {
+      throw createDraftRecoveryError(
+        error instanceof Error
+          ? error.message
+          : "Created Coastline draft could not be reserved for recovery",
+      );
+    }
     const unverifiedReceipt = createInboxZeroDraftReceipt({
       proposal,
       draftId,
@@ -233,7 +251,17 @@ export async function createOrReconcileCoastlineDraft({
 
   try {
     await assertExactDraftReadback({ client, draftId, proposal });
+    await reconcileCoastlineDraft({
+      reservationId: reservation.reservationId,
+      draftId,
+      proposal,
+      client,
+    });
   } catch (error) {
+    await markRecoveryRequired(
+      reservation.reservationId,
+      DRAFT_READBACK_ERROR_CODE,
+    );
     const failedReceipt = {
       ...createInboxZeroDraftReceipt({ proposal, draftId }),
       terminalState: "failed" as const,
@@ -266,75 +294,6 @@ export async function createOrReconcileCoastlineDraft({
   return { draftId, receipt };
 }
 
-async function reserveCoastlineDraft({
-  actionId,
-  proposal,
-}: {
-  actionId: string;
-  proposal: InboxZeroDraftProposal;
-}): Promise<{ draftId: string | null }> {
-  for (let attempt = 0; attempt < MAX_RECEIPT_PERSISTENCE_ATTEMPTS; attempt++) {
-    const action = await prisma.executedAction.findUnique({
-      where: { id: actionId },
-      select: {
-        draftId: true,
-        draftContextMetadata: true,
-        updatedAt: true,
-      },
-    });
-    if (!action) {
-      throw createDraftRecoveryError("Executed action is unavailable");
-    }
-
-    const metadata = toMetadataObject(action.draftContextMetadata);
-    const existingReservation = parseReservation(
-      metadata.coastlineDraftReservation,
-    );
-    const existingReceipt = parseReceipt(metadata.coastlineDraft);
-
-    if (existingReservation || existingReceipt) {
-      const existingKey =
-        existingReservation?.idempotencyKey ?? existingReceipt?.idempotencyKey;
-      if (existingKey !== proposal.idempotency_key) {
-        throw createDraftRecoveryError(
-          "Executed action is reserved for a different idempotency key",
-        );
-      }
-      const persistedDraftId = action.draftId ?? existingReceipt?.draftId;
-      if (!persistedDraftId) {
-        throw createDraftRecoveryError(
-          "Draft creation is reserved but has no recoverable draft ID",
-        );
-      }
-      return { draftId: persistedDraftId };
-    }
-
-    const reservation: CoastlineDraftReservation = {
-      schemaVersion: "inbox_zero_draft_reservation.v1",
-      idempotencyKey: proposal.idempotency_key,
-      accountId: proposal.account_id,
-      threadId: proposal.thread_id,
-      sourceMessageId: proposal.source_message_id,
-      reservedAt: new Date().toISOString(),
-    };
-    const result = await prisma.executedAction.updateMany({
-      where: { id: actionId, updatedAt: action.updatedAt },
-      data: {
-        updatedAt: new Date(),
-        draftContextMetadata: {
-          ...metadata,
-          coastlineDraftReservation: reservation,
-        },
-      },
-    });
-    if (result.count === 1) return { draftId: null };
-  }
-
-  throw createDraftRecoveryError(
-    "Draft idempotency reservation changed during persistence",
-  );
-}
-
 async function assertExactDraftReadback({
   client,
   draftId,
@@ -350,7 +309,8 @@ async function assertExactDraftReadback({
   }
   if (
     draft.subject.trim() !== proposal.subject.trim() ||
-    stripQuotedContent(extractDraftPlainText(draft)) !== proposal.body_text.trim()
+    stripQuotedContent(extractDraftPlainText(draft)) !==
+      proposal.body_text.trim()
   ) {
     throw new Error("Draft content did not match the reserved proposal");
   }
@@ -423,28 +383,6 @@ async function persistRecoveryReceiptBestEffort({
       error,
     });
   }
-}
-
-function parseReservation(value: unknown): CoastlineDraftReservation | null {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("schemaVersion" in value) ||
-    value.schemaVersion !== "inbox_zero_draft_reservation.v1" ||
-    !("idempotencyKey" in value) ||
-    typeof value.idempotencyKey !== "string" ||
-    !("accountId" in value) ||
-    typeof value.accountId !== "string" ||
-    !("threadId" in value) ||
-    typeof value.threadId !== "string" ||
-    !("sourceMessageId" in value) ||
-    typeof value.sourceMessageId !== "string" ||
-    !("reservedAt" in value) ||
-    typeof value.reservedAt !== "string"
-  ) {
-    return null;
-  }
-  return value as CoastlineDraftReservation;
 }
 
 function parseReceipt(value: unknown): InboxZeroDraftReceipt | null {

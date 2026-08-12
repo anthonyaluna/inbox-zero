@@ -18,6 +18,11 @@ import {
   createInboxZeroDraftProposal,
   createInboxZeroDraftReceipt,
 } from "@/utils/coastline/draft-proposal";
+import {
+  reconcileCoastlineDraft,
+  recordCoastlineDraftCreation,
+  reserveOrReconcileCoastlineDraft,
+} from "@/utils/coastline/draft-reservation";
 
 vi.mock("@/utils/prisma", () => ({
   default: {
@@ -28,6 +33,13 @@ vi.mock("@/utils/prisma", () => ({
       updateMany: vi.fn(),
     },
   },
+}));
+
+vi.mock("@/utils/coastline/draft-reservation", () => ({
+  reserveOrReconcileCoastlineDraft: vi.fn(),
+  recordCoastlineDraftCreation: vi.fn(),
+  reconcileCoastlineDraft: vi.fn(),
+  markRecoveryRequired: vi.fn(),
 }));
 
 const previousDraftAction = {
@@ -527,6 +539,9 @@ describe("createOrReconcileCoastlineDraft", () => {
   const logger = createTestLogger();
   const mockFindUnique = prisma.executedAction.findUnique as Mock;
   const mockUpdateMany = prisma.executedAction.updateMany as Mock;
+  const mockReserve = reserveOrReconcileCoastlineDraft as Mock;
+  const mockRecordCreation = recordCoastlineDraftCreation as Mock;
+  const mockReconcile = reconcileCoastlineDraft as Mock;
   const proposal = createInboxZeroDraftProposal({
     provider: "microsoft",
     account_id: "account-123",
@@ -550,9 +565,19 @@ describe("createOrReconcileCoastlineDraft", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockRecordCreation.mockResolvedValue(undefined);
+    mockReconcile.mockResolvedValue({
+      draftId: "draft-123",
+      terminalState: "created_verified",
+    });
   });
 
   it("reserves the idempotency key before creating and persists verified readback", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
     mockFindUnique
       .mockResolvedValueOnce({
         draftId: null,
@@ -564,12 +589,6 @@ describe("createOrReconcileCoastlineDraft", () => {
           coastlineDraftReservation: expect.any(Object),
         },
         updatedAt: new Date("2026-08-11T12:00:01.000Z"),
-      })
-      .mockResolvedValueOnce({
-        draftContextMetadata: {
-          coastlineDraftReservation: expect.any(Object),
-        },
-        updatedAt: new Date("2026-08-11T12:00:02.000Z"),
       })
       .mockResolvedValueOnce({
         draftId: "draft-123",
@@ -608,7 +627,7 @@ describe("createOrReconcileCoastlineDraft", () => {
       logger,
     });
 
-    expect(mockUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
       createDraft.mock.invocationCallOrder[0],
     );
     expect(getDraft).toHaveBeenCalledWith("draft-123");
@@ -620,6 +639,11 @@ describe("createOrReconcileCoastlineDraft", () => {
   });
 
   it("reconciles a persisted unverified draft without creating another provider draft", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: "draft-123",
+      state: "created_unverified",
+    });
     const unverifiedReceipt = createInboxZeroDraftReceipt({
       proposal,
       draftId: "draft-123",
@@ -639,12 +663,6 @@ describe("createOrReconcileCoastlineDraft", () => {
           coastlineDraft: unverifiedReceipt,
         },
         updatedAt: new Date("2026-08-11T12:00:00.000Z"),
-      })
-      .mockResolvedValueOnce({
-        draftContextMetadata: {
-          coastlineDraft: unverifiedReceipt,
-        },
-        updatedAt: new Date("2026-08-11T12:00:01.000Z"),
       })
       .mockResolvedValueOnce({
         draftId: "draft-123",
@@ -685,6 +703,11 @@ describe("createOrReconcileCoastlineDraft", () => {
   });
 
   it("fails closed on an unresolved reservation instead of creating a duplicate", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "recovery_required",
+    });
     mockFindUnique.mockResolvedValueOnce({
       draftId: null,
       draftContextMetadata: {

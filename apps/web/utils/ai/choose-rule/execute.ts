@@ -126,6 +126,18 @@ export async function executeAct({
         const draftProposal = getDraftProposal(actionResult);
         if (draftProposal) {
           const validatedProposal = parseInboxZeroDraftProposal(draftProposal);
+          if (
+            validatedProposal.account_id !== emailAccount.id ||
+            validatedProposal.thread_id !== message.threadId ||
+            validatedProposal.source_message_id !== message.id
+          ) {
+            throw Object.assign(
+              new Error(
+                "Coastline draft proposal does not match the executing message",
+              ),
+              { code: "COASTLINE_DRAFT_PROPOSAL_CONTEXT_MISMATCH" },
+            );
+          }
           log.info("Draft-only proposal passed execution validation", {
             idempotencyKey: validatedProposal.idempotency_key,
             sourceMessageId: validatedProposal.source_message_id,
