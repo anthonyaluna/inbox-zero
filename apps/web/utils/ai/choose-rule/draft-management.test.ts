@@ -25,6 +25,18 @@ import {
   reserveOrReconcileCoastlineDraft,
 } from "@/utils/coastline/draft-reservation";
 
+const coastlineEnvironment = vi.hoisted(() => ({
+  coastlineDraftProposalsEnabled: false,
+}));
+
+vi.mock("@/env", () => ({
+  env: {
+    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
+      return coastlineEnvironment.coastlineDraftProposalsEnabled;
+    },
+  },
+}));
+
 vi.mock("@/utils/prisma", () => ({
   default: {
     executedAction: {
@@ -70,6 +82,7 @@ describe("handlePreviousDraftDeletion", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    coastlineEnvironment.coastlineDraftProposalsEnabled = false;
   });
 
   it("should delete unmodified draft and update draft status", async () => {
@@ -114,6 +127,28 @@ describe("handlePreviousDraftDeletion", () => {
       mockDeleteDraft,
       mockUpdate,
     });
+    expect(result).toEqual({ shouldCreateDraft: true });
+  });
+
+  it("does not delete a prior draft while Coastline draft proposals are enabled", async () => {
+    coastlineEnvironment.coastlineDraftProposalsEnabled = true;
+    mockFindFirst.mockResolvedValue(previousDraftAction);
+    mockGetDraft.mockResolvedValue(
+      createParsedMessage({
+        textPlain:
+          "Hello, this is a test draft\n\nOn Monday wrote:\n> Previous message",
+        snippet: "Hello, this is a test draft",
+      }),
+    );
+
+    const result = await handlePreviousDraftDeletion({
+      client: mockClient,
+      executedRule,
+      logger,
+    });
+
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
     expect(result).toEqual({ shouldCreateDraft: true });
   });
 

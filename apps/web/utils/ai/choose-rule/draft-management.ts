@@ -1,4 +1,5 @@
 import prisma from "@/utils/prisma";
+import { env } from "@/env";
 import { ActionType, DraftEmailStatus } from "@/generated/prisma/enums";
 import type { ExecutedRule } from "@/generated/prisma/client";
 import type { Logger } from "@/utils/logger";
@@ -20,6 +21,7 @@ import {
   reserveOrReconcileCoastlineDraft,
   buildCoastlineDraftMarker,
 } from "@/utils/coastline/draft-reservation";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
 const RECEIPT_PERSISTENCE_ERROR_CODE =
@@ -124,6 +126,14 @@ export async function handlePreviousDraftDeletion({
       })
     ) {
       logger.info("Draft content matches, deleting draft.");
+
+      // Draft replacement can reach this helper with a raw provider instance,
+      // below the provider proxy boundary. Guard the deletion at its direct sink.
+      assertCoastlineMutationAllowed({
+        surface: "draft-management/previous-draft-deletion",
+        mutation: "DELETE_DRAFT",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
 
       await Promise.all([
         client.deleteDraft(previousDraftAction.draftId),
