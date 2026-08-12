@@ -7,7 +7,8 @@ param(
   [string]$SourceMessageId,
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[^\s@]+@[^\s@]+\.[^\s@]+$')]
-  [string]$TestRecipient
+  [string]$TestRecipient,
+  [string]$BlockedReceiptPath
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +17,7 @@ $ErrorActionPreference = "Stop"
 $missingPrerequisiteCode = "COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $requiredVariables = @(
+  "COASTLINE_INBOX_ZERO_PROTECTED_SHA",
   "COASTLINE_STAGING_BASE_URL",
   "COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH",
   "COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256",
@@ -33,8 +35,59 @@ $requiredVariables = @(
 )
 
 function Stop-Canary {
-  param([string]$Code, [string]$Message)
+  param(
+    [string]$Code,
+    [string]$Message,
+    [string[]]$MissingPrerequisites = @()
+  )
+  Write-BlockedReceipt -Code $Code -MissingPrerequisites $MissingPrerequisites
   throw "[$Code] $Message"
+}
+
+function Write-BlockedReceipt {
+  param(
+    [string]$Code,
+    [string[]]$MissingPrerequisites
+  )
+
+  if ([string]::IsNullOrWhiteSpace($BlockedReceiptPath)) {
+    return
+  }
+
+  try {
+    $resolvedRoot = (Resolve-Path -LiteralPath $repoRoot).Path.TrimEnd(
+      [IO.Path]::DirectorySeparatorChar,
+      [IO.Path]::AltDirectorySeparatorChar
+    )
+    $parent = Split-Path -Parent $BlockedReceiptPath
+    if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
+      return
+    }
+    $resolvedParent = (Resolve-Path -LiteralPath $parent).Path.TrimEnd(
+      [IO.Path]::DirectorySeparatorChar,
+      [IO.Path]::AltDirectorySeparatorChar
+    )
+    if ($resolvedParent.StartsWith("$resolvedRoot$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase) -or
+      $resolvedParent -ceq $resolvedRoot) {
+      return
+    }
+
+    $currentSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
+    if ($currentSha -notmatch '^[a-f0-9]{40}$') {
+      $currentSha = $null
+    }
+    [ordered]@{
+      schema_version = "coastline_inbox_zero_canary_blocked_receipt.v1"
+      terminal_state = "blocked"
+      reason_code = $Code
+      current_sha = $currentSha
+      missing_prerequisites = @($MissingPrerequisites | Sort-Object -Unique)
+      observed_at = [DateTimeOffset]::UtcNow.ToString("o")
+      external_systems_touched = @()
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $BlockedReceiptPath -Encoding utf8NoBOM
+  } catch {
+    # Preserve the primary fail-closed canary error if receipt persistence is unavailable.
+  }
 }
 
 function Get-Sha256 {
@@ -157,7 +210,14 @@ foreach ($name in $requiredVariables) {
 }
 $missing = @($requiredVariables | Where-Object { -not $values.ContainsKey($_) })
 if ($missing.Count -gt 0) {
-  Stop-Canary -Code $missingPrerequisiteCode -Message "Missing protected prerequisites: $($missing -join ',')."
+  Stop-Canary -Code $missingPrerequisiteCode -Message "Missing protected prerequisites: $($missing -join ',')." -MissingPrerequisites $missing
+}
+
+$currentSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
+if ($currentSha -notmatch '^[a-f0-9]{40}$' -or
+  $values.COASTLINE_INBOX_ZERO_PROTECTED_SHA -notmatch '^[a-f0-9]{40}$' -or
+  $values.COASTLINE_INBOX_ZERO_PROTECTED_SHA -cne $currentSha) {
+  Stop-Canary -Code "COASTLINE_CANARY_PROTECTED_SHA_MISMATCH" -Message "Protected staging SHA does not match the current approved artifact."
 }
 
 if (-not (Test-ExactHttpsUrl -Value $BaseUrl.AbsoluteUri -Expected $values.COASTLINE_STAGING_BASE_URL)) {

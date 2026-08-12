@@ -29,7 +29,12 @@ if (-not (Test-SafeStagingUrl $BaseUrl)) {
   throw "BaseUrl must be loopback or exactly match the protected COASTLINE_STAGING_BASE_URL."
 }
 
-$protectedSha = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_ARTIFACT_SHA")
+$protectedSha = [Environment]::GetEnvironmentVariable("COASTLINE_INBOX_ZERO_PROTECTED_SHA")
+if ([string]::IsNullOrWhiteSpace($protectedSha)) {
+  # The workflow passes the deployer-provided binding under this legacy name;
+  # accept it only as an equivalent protected runtime binding.
+  $protectedSha = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_ARTIFACT_SHA")
+}
 $cronSecret = [Environment]::GetEnvironmentVariable("CRON_SECRET")
 if ($protectedSha -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($cronSecret)) {
   throw "Remote artifact SHA and cron credential must be configured before staging verification."
@@ -37,6 +42,13 @@ if ($protectedSha -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($c
 
 $started = [DateTimeOffset]::UtcNow
 $isLoopback = $BaseUrl.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")
+if (-not $isLoopback) {
+  $repoRoot = Split-Path -Parent $PSScriptRoot
+  $currentSha = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
+  if ($currentSha -notmatch '^[a-f0-9]{40}$' -or $protectedSha -cne $currentSha) {
+    throw "Remote artifact SHA must match the current approved checkout before staging verification."
+  }
+}
 $nonceEntropy = [Guid]::NewGuid().ToString("N").Substring(0, 20)
 $runNonce = $started.ToUnixTimeMilliseconds().ToString("x12") + $nonceEntropy
 $base = $BaseUrl.GetLeftPart([UriPartial]::Authority).TrimEnd("/")

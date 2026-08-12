@@ -11,6 +11,9 @@ Set these values only in the protected staging deployment environment. Do not
 put their values in Git, CI logs, receipts, shell history, or this runbook.
 
 - `COASTLINE_STAGING_BASE_URL`: exact HTTPS staging origin.
+- `COASTLINE_INBOX_ZERO_PROTECTED_SHA`: the protected 40-character artifact
+  SHA. The runner compares it with the current approved checkout before any
+  executor or verifier request.
 - `COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH`: protected,
   out-of-repository registration record for the one authenticated executor.
 - `COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256`: protected hash of
@@ -84,7 +87,8 @@ pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
 pwsh -File scripts/Run-CoastlineInboxZeroMicrosoftCanary.ps1 `
   -BaseUrl <exact protected COASTLINE_STAGING_BASE_URL> `
   -SourceMessageId <known dedicated-test source message ID> `
-  -TestRecipient <fixed dedicated-test recipient>
+  -TestRecipient <fixed dedicated-test recipient> `
+  -BlockedReceiptPath <existing outside-repository receipt path>
 ```
 
 The runner posts only a draft-create request to the registered protected
@@ -125,5 +129,9 @@ part of rollback; the dedicated test mailbox retention process owns any later
 cleanup.
 
 If a protected prerequisite is absent, the runner exits nonzero with
-`COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE`. That failure is expected and
-is not emulator or real-canary evidence.
+`COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE` and, when
+`-BlockedReceiptPath` points to an existing directory outside the repository,
+writes a sanitized blocked receipt there. A SHA mismatch exits with
+`COASTLINE_CANARY_PROTECTED_SHA_MISMATCH`. Neither result is emulator or
+real-canary evidence, and neither contacts Graph, a mailbox, or a deployment
+target.

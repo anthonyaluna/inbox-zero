@@ -8,16 +8,21 @@ Describe "Coastline Microsoft canary runner" {
     try {
       $escapedScriptPath = $scriptPath.Replace("'", "''")
       $escapedReceiptDirectory = $receiptDirectory.Replace("'", "''")
+      $blockedReceiptPath = (Join-Path $receiptDirectory "blocked.json").Replace("'", "''")
       $command = @"
 Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
 `$env:COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = '$escapedReceiptDirectory'
-& '$escapedScriptPath' -BaseUrl 'https://staging.example.test' -SourceMessageId 'test-message' -TestRecipient 'canary@testing.example'
+& '$escapedScriptPath' -BaseUrl 'https://staging.example.test' -SourceMessageId 'test-message' -TestRecipient 'canary@testing.example' -BlockedReceiptPath '$blockedReceiptPath'
 "@
       $output = & pwsh -NoProfile -Command $command 2>&1
 
       $LASTEXITCODE | Should Be 1
       ($output | Out-String) | Should Match "COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE"
-      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
+      $blocked = Get-Content -LiteralPath (Join-Path $receiptDirectory "blocked.json") -Raw | ConvertFrom-Json
+      $blocked.schema_version | Should Be "coastline_inbox_zero_canary_blocked_receipt.v1"
+      $blocked.terminal_state | Should Be "blocked"
+      $blocked.reason_code | Should Be "COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE"
+      @($blocked.external_systems_touched).Count | Should Be 0
     } finally {
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -27,6 +32,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-scopes-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
     $environment = @{
+      COASTLINE_INBOX_ZERO_PROTECTED_SHA = (& git rev-parse HEAD).Trim()
       COASTLINE_STAGING_BASE_URL = "https://staging.example.test"
       COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = (Join-Path $testRoot "registration.json")
       COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = ("a" * 64)
@@ -91,6 +97,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
     $mailboxHash = ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($mailbox)) | ForEach-Object { $_.ToString("x2") }) -join ""
     $recipientHash = ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($recipient)) | ForEach-Object { $_.ToString("x2") }) -join ""
     $environment = @{
+      COASTLINE_INBOX_ZERO_PROTECTED_SHA = (& git rev-parse HEAD).Trim()
       COASTLINE_STAGING_BASE_URL = $baseUrl
       COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = $registrationPath
       COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = $registrationHash
@@ -141,6 +148,45 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       }
       ($failedOutput | Out-String) | Should Match "COASTLINE_CANARY_RECEIPT_INVALID"
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
+    } finally {
+      Remove-Item Function:Invoke-RestMethod -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  It "rejects a protected SHA that does not match the current checkout before any remote call" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-sha-$([Guid]::NewGuid().ToString('N'))"
+    $blockedReceiptPath = Join-Path $testRoot "blocked.json"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    $environment = @{
+      COASTLINE_INBOX_ZERO_PROTECTED_SHA = "f" * 40
+      COASTLINE_STAGING_BASE_URL = "https://staging.example.test"
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = (Join-Path $testRoot "registration.json")
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = ("a" * 64)
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN = "test-auth-token"
+      COASTLINE_MICROSOFT_CANARY_MAILBOX = "canary-mailbox@testing.example"
+      COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID = "test-account"
+      COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"
+      COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"
+      COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"
+      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite"
+      COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $testRoot
+      COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
+      NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"
+    }
+    try {
+      foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
+      $script:restCalls = 0
+      function Invoke-RestMethod { $script:restCalls++ }
+
+      $failure = $null
+      try { . $scriptPath -BaseUrl $environment.COASTLINE_STAGING_BASE_URL -SourceMessageId $environment.COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID -TestRecipient $environment.COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT -BlockedReceiptPath $blockedReceiptPath } catch { $failure = $_ }
+
+      ($failure | Out-String) | Should Match "COASTLINE_CANARY_PROTECTED_SHA_MISMATCH"
+      $script:restCalls | Should Be 0
+      $blocked = Get-Content -LiteralPath $blockedReceiptPath -Raw | ConvertFrom-Json
+      $blocked.reason_code | Should Be "COASTLINE_CANARY_PROTECTED_SHA_MISMATCH"
     } finally {
       Remove-Item Function:Invoke-RestMethod -ErrorAction SilentlyContinue
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue

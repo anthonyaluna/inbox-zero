@@ -29,6 +29,18 @@ pwsh -File scripts/Assert-CoastlineInboxZeroReadiness.ps1 `
 With no out-of-repository receipt paths supplied, the expected result is
 `pilot-only`. Missing evidence is not a passing result.
 
+## Task 6 protected-staging boundary
+
+The protected-staging preflight was run locally for the current branch. The
+checkout and local Docker, PostgreSQL, and Redis checks passed, but the
+operator environment did not contain the protected staging bindings. The
+Microsoft canary therefore terminated with
+`COASTLINE_CANARY_MISSING_PROTECTED_PREREQUISITE` before any executor,
+verifier, deployment endpoint, Microsoft Graph resource, or mailbox request.
+This is a blocked preflight result, not staging, canary, replay, rollback, or
+promotion evidence. The sanitized blocked receipt remains outside the
+repository.
+
 ## Current evidence matrix
 
 | Evidence | Current result | Stable reason when absent | Limitation |

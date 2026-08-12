@@ -93,6 +93,27 @@ Describe "Coastline Inbox Zero staging verification" {
     }
   }
 
+  It "rejects a non-loopback verifier target when the protected SHA is not the current checkout" {
+    $priorBaseUrl = $env:COASTLINE_STAGING_BASE_URL
+    $priorSha = $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA
+    $priorArtifactSha = $env:COASTLINE_STAGING_ARTIFACT_SHA
+    $priorSecret = $env:CRON_SECRET
+    try {
+      $env:COASTLINE_STAGING_BASE_URL = "https://approved-staging.example.test"
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = "f" * 40
+      Remove-Item Env:COASTLINE_STAGING_ARTIFACT_SHA -ErrorAction SilentlyContinue
+      $env:CRON_SECRET = "cron-secret"
+      $caught = $null
+      try { . $verificationScriptPath -BaseUrl "https://approved-staging.example.test" } catch { $caught = $_ }
+      ($caught | Out-String) | Should Match "current approved checkout"
+    } finally {
+      $env:COASTLINE_STAGING_BASE_URL = $priorBaseUrl
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = $priorSha
+      $env:COASTLINE_STAGING_ARTIFACT_SHA = $priorArtifactSha
+      $env:CRON_SECRET = $priorSecret
+    }
+  }
+
   It "binds the receipt only to remote artifact, worker, queue, and authenticated cron evidence" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-staging-$([Guid]::NewGuid().ToString('N'))"
     $outputPath = Join-Path $testRoot "receipt.json"
