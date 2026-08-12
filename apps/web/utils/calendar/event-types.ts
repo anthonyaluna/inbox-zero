@@ -18,6 +18,7 @@ export interface CalendarEvent {
   location?: string;
   organizerEmail?: string;
   startTime: Date;
+  timezone?: string;
   title: string;
   videoConferenceLink?: string;
 }
@@ -29,6 +30,7 @@ export interface CalendarEventWriteInput {
   endTime: Date;
   locationType: BookingLinkLocationType;
   locationValue?: string | null;
+  preserveTimezone?: boolean;
   startTime: Date;
   timezone: string;
   title: string;
@@ -66,4 +68,11 @@ export interface CalendarEventProvider {
     timeMax: Date;
     maxResults: number;
   }): Promise<CalendarEvent[]>;
+}
+
+export interface CalendarEventReadProvider {
+  getEvent(input: {
+    calendarId: string;
+    eventId: string;
+  }): Promise<CalendarEvent | null>;
 }

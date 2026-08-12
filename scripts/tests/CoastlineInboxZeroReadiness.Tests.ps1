@@ -121,7 +121,7 @@ function New-CompleteReadinessEvidence {
       idempotencyKey = $idempotencyKey
       runNonce = $runNonce
       graphReadbackStatus = "verified"
-      scopeIdentity = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+      scopeIdentity = "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
       noSendCapability = "Mail.Send_absent"
       idempotencyReplay = "existing_draft_reconciled"
       terminalState = "created_verified"

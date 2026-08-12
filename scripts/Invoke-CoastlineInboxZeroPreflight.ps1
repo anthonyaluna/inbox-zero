@@ -87,7 +87,7 @@ function Test-EmulatorUrl {
 function Get-ExactMicrosoftScopes {
   param([string]$Value)
 
-  $expected = @("Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
+  $expected = @("Calendars.ReadWrite", "Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
   [string[]]$configured = @($Value -split '[,\s]+' | Where-Object { $_ })
   [Array]::Sort($configured, [StringComparer]::Ordinal)
   if (($configured -join "|") -cne ($expected -join "|")) {

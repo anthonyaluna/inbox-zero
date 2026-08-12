@@ -11,6 +11,7 @@ import { getProviderAlignedLocationType } from "@/utils/booking/location";
 import type { BookingLinkLocationType } from "@/generated/prisma/enums";
 import type {
   CalendarEventAttendee,
+  CalendarEvent,
   CalendarEventWriteResult,
 } from "@/utils/calendar/event-types";
 
@@ -32,6 +33,10 @@ export type CreatedCalendarEvent = CalendarEventWriteResult & {
   providerConnectionId: string;
 };
 
+export type CreatedCalendarEventWithReadback = CreatedCalendarEvent & {
+  readback: CalendarEvent;
+};
+
 export async function createCalendarEvent({
   emailAccountId,
   destinationCalendarId,
@@ -43,6 +48,7 @@ export async function createCalendarEvent({
   attendees,
   locationType,
   locationValue,
+  preserveTimezone,
   logger,
 }: CreateCalendarEventInput & {
   logger: Logger;
@@ -70,6 +76,7 @@ export async function createCalendarEvent({
       provider: destination.connection.provider,
     }),
     locationValue,
+    preserveTimezone,
   });
 
   return {
@@ -77,6 +84,78 @@ export async function createCalendarEvent({
     provider: destination.connection.provider,
     providerConnectionId: destination.connection.id,
   };
+}
+
+export async function createCalendarEventWithReadback(
+  input: CreateCalendarEventInput & { logger: Logger },
+): Promise<CreatedCalendarEventWithReadback> {
+  const destination = await getWritableCalendar({
+    emailAccountId: input.emailAccountId,
+    destinationCalendarId: input.destinationCalendarId,
+  });
+  const provider = createWritableProvider({
+    connection: destination.connection,
+    emailAccountId: input.emailAccountId,
+    logger: input.logger,
+  });
+  const created = await provider.createEvent({
+    calendarId: destination.calendarId,
+    title: input.title,
+    description: input.description,
+    startTime: input.startTime,
+    endTime: input.endTime,
+    timezone: input.timezone,
+    attendees: input.attendees,
+    locationType: getProviderAlignedLocationType({
+      locationType: input.locationType,
+      provider: destination.connection.provider,
+    }),
+    locationValue: input.locationValue,
+  });
+  if (!("getEvent" in provider) || typeof provider.getEvent !== "function") {
+    throw new SafeError("Calendar provider does not support event readback");
+  }
+  const readback = await provider.getEvent({
+    calendarId: destination.calendarId,
+    eventId: created.id,
+  });
+  if (!readback) {
+    throw new SafeError("Calendar event readback not found");
+  }
+  return {
+    ...created,
+    provider: destination.connection.provider,
+    providerConnectionId: destination.connection.id,
+    readback,
+  };
+}
+
+export async function readCalendarEvent({
+  providerConnectionId,
+  providerCalendarId,
+  providerEventId,
+  emailAccountId,
+  logger,
+}: {
+  providerConnectionId: string;
+  providerCalendarId: string;
+  providerEventId: string;
+  emailAccountId: string;
+  logger: Logger;
+}): Promise<CalendarEvent | null> {
+  const provider = await getWritableProviderForExistingEvent({
+    providerConnectionId,
+    providerCalendarId,
+    emailAccountId,
+    logger,
+  });
+  if (!("getEvent" in provider) || typeof provider.getEvent !== "function") {
+    throw new SafeError("Calendar provider does not support event readback");
+  }
+  return provider.getEvent({
+    calendarId: providerCalendarId,
+    eventId: providerEventId,
+  });
 }
 
 export async function updateCalendarEvent({

@@ -361,7 +361,7 @@ if (-not $canaryEvidence.supplied) {
     (Get-PropertyValue $canary "runNonce") -ceq $runNonce -and
     (Test-BoundedEvidenceTimestamp (Get-PropertyValue $canary "generatedAt") $startedAt $completedAt) -and
     (Get-PropertyValue $canary "graphReadbackStatus") -ceq "verified" -and
-    (Get-PropertyValue $canary "scopeIdentity") -ceq "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile" -and
+    (Get-PropertyValue $canary "scopeIdentity") -ceq "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile" -and
     (Get-PropertyValue $canary "noSendCapability") -ceq "Mail.Send_absent" -and
     (Get-PropertyValue $canary "idempotencyReplay") -in @("existing_draft_reconciled", "duplicate_prevented") -and
     (Get-PropertyValue $canary "terminalState") -ceq "created_verified" -and

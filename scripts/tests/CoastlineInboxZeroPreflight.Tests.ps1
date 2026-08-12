@@ -31,7 +31,7 @@ Describe "Coastline Inbox Zero preflight" {
         "CRON_SECRET=cron-secret"
         "COASTLINE_DRAFT_PROPOSALS_ENABLED=true"
         "NEXT_PUBLIC_EMAIL_SEND_ENABLED=false"
-        "COASTLINE_MICROSOFT_ALLOWED_SCOPES=openid profile email User.Read offline_access Mail.ReadWrite MailboxSettings.ReadWrite"
+        "COASTLINE_MICROSOFT_ALLOWED_SCOPES=openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite MailboxSettings.ReadWrite"
       ) | Set-Content -LiteralPath $environmentFile
 
       $output = & pwsh -NoProfile -Command "& '$($scriptPath.Replace("'", "''"))' -Mode Local -EnvironmentFile '$environmentFile'" 2>&1
@@ -56,7 +56,7 @@ Describe "Coastline Inbox Zero preflight" {
         "CRON_SECRET=cron-secret"
         "COASTLINE_DRAFT_PROPOSALS_ENABLED=true"
         "NEXT_PUBLIC_EMAIL_SEND_ENABLED=false"
-        "COASTLINE_MICROSOFT_ALLOWED_SCOPES=openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite"
+        "COASTLINE_MICROSOFT_ALLOWED_SCOPES=openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite Calendars.ReadWrite"
       ) | Set-Content -LiteralPath $environmentFile
 
       $output = & pwsh -NoProfile -Command "& '$($scriptPath.Replace("'", "''"))' -Mode Local -EnvironmentFile '$environmentFile'" 2>&1

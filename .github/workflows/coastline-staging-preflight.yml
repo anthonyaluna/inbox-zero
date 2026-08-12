@@ -95,7 +95,7 @@ jobs:
       REDIS_URL: redis://redis:6379
       COASTLINE_DRAFT_PROPOSALS_ENABLED: "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED: "false"
-      COASTLINE_MICROSOFT_ALLOWED_SCOPES: "openid profile email User.Read offline_access Mail.ReadWrite"
+      COASTLINE_MICROSOFT_ALLOWED_SCOPES: "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite"
 
     steps:
       - uses: actions/checkout@v4

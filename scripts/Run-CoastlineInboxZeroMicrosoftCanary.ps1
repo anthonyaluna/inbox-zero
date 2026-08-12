@@ -120,7 +120,7 @@ function Get-IdempotencyKey {
 function Get-ExactMicrosoftScopes {
   param([string]$Value)
 
-  $expected = @("Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
+  $expected = @("Calendars.ReadWrite", "Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
   [string[]]$configured = @($Value -split '[,\s]+' | Where-Object { $_ })
   [Array]::Sort($configured, [StringComparer]::Ordinal)
   if (($configured -join "|") -cne ($expected -join "|")) {
@@ -305,7 +305,7 @@ if ($values.COASTLINE_DRAFT_PROPOSALS_ENABLED -cne "true" -or $values.NEXT_PUBLI
 }
 $scopes = @(Get-ExactMicrosoftScopes -Value $values.COASTLINE_MICROSOFT_CANARY_SCOPES)
 $expectedScopeIdentity = "delegated:$($scopes -join ',')"
-if ($scopes.Count -ne 6 -or $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY -cne $expectedScopeIdentity) {
+if ($scopes.Count -ne 7 -or $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY -cne $expectedScopeIdentity) {
   Stop-Canary -Code "COASTLINE_CANARY_MICROSOFT_SCOPES_MISMATCH" -Message "Protected Microsoft scopes and connected identity must exactly match the draft-only allowlist."
 }
 

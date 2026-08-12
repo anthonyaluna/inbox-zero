@@ -43,8 +43,8 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"
       COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"
       COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"
-      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
-      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite"
+      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite Calendars.ReadWrite"
       COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $testRoot
       COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"
@@ -77,7 +77,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
     $sourceMessageId = "test-message"
     $mailbox = "canary-mailbox@testing.example"
     $recipient = "canary@testing.example"
-    $scopeIdentity = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+    $scopeIdentity = "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
     $idempotencyKey = "inbox-zero/draft/test-account/test-thread/test-message"
     $observedAt = [DateTimeOffset]::UtcNow.ToString("o")
     $registration = [ordered]@{
@@ -123,7 +123,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = $sourceMessageId
       COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = $recipient
       COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = $scopeIdentity
-      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite"
       COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $receiptDirectory
       COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"
@@ -237,8 +237,8 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"
       COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"
       COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"
-      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
-      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite"
+      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite"
       COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $testRoot
       COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"
@@ -276,7 +276,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       $protectedPath = Join-Path $testRoot "protected.json"; @{ schema_version = "coastline_inbox_zero_protected_environment_evidence.v1"; artifact_sha = $sha; environment_name = "coastline-inbox-zero-staging"; protected = $true; run_nonce = $nonce; observed_at = $now } | ConvertTo-Json -Compress | Set-Content $protectedPath -Encoding utf8NoBOM
       $stagingPath = Join-Path $testRoot "staging.json"; @{ schema_version = "coastline_inbox_zero_staging_receipt.v2"; provenance = "remote_https"; is_loopback = $false; run_nonce = $nonce; started_at = $now; completed_at = $now; artifact_sha = $sha; worker_artifact_sha = $sha; worker_heartbeat_at = $now; remote_worker_identity = "worker"; remote_queue_identity = "queue"; cron_evidence_id = ("c" * 64); service_states = @{ web = "healthy"; worker = "running"; queue = "reachable"; cron_unauthenticated = "rejected"; cron_authenticated = "verified" }; checks = @(@{ code = "WEB_HEALTH"; status = "pass" }, @{ code = "CRON_UNAUTHENTICATED_REJECTED"; status = "pass" }, @{ code = "CRON_AUTHENTICATED_SUCCESS"; status = "pass" }, @{ code = "REMOTE_ARTIFACT_WORKER_QUEUE"; status = "pass" }); outcome = "pass" } | ConvertTo-Json -Depth 5 -Compress | Set-Content $stagingPath -Encoding utf8NoBOM
       $rollbackPath = Join-Path $testRoot "rollback.json"; @{ schema_version = "coastline_inbox_zero_rollback_control.v1"; artifact_sha = $sha; run_nonce = $nonce; prepared_at = $now; terminal_state = "prepared"; disable_draft_proposals = $true; preserve_mailbox_data = $true; rollback_artifact_sha = ("a" * 40) } | ConvertTo-Json -Compress | Set-Content $rollbackPath -Encoding utf8NoBOM
-      $environment = @{ COASTLINE_INBOX_ZERO_PROTECTED_SHA = $sha; COASTLINE_INBOX_ZERO_PROMOTION_RUN_NONCE = $nonce; COASTLINE_STAGING_BASE_URL = "https://staging.example.test"; COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = $registrationPath; COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = (Get-FileHash $registrationPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN = "test-auth-token"; COASTLINE_MICROSOFT_CANARY_MAILBOX = "canary-mailbox@testing.example"; COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID = "test-account"; COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"; COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"; COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"; COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"; COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite"; COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $receiptDirectory; COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"; NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"; COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_PATH = $protectedPath; COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_SHA256 = (Get-FileHash $protectedPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH = $stagingPath; COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 = (Get-FileHash $stagingPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_PATH = $rollbackPath; COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_SHA256 = (Get-FileHash $rollbackPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+      $environment = @{ COASTLINE_INBOX_ZERO_PROTECTED_SHA = $sha; COASTLINE_INBOX_ZERO_PROMOTION_RUN_NONCE = $nonce; COASTLINE_STAGING_BASE_URL = "https://staging.example.test"; COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = $registrationPath; COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = (Get-FileHash $registrationPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN = "test-auth-token"; COASTLINE_MICROSOFT_CANARY_MAILBOX = "canary-mailbox@testing.example"; COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID = "test-account"; COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"; COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"; COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"; COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Calendars.ReadWrite,Mail.ReadWrite,User.Read,email,offline_access,openid,profile"; COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite"; COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $receiptDirectory; COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"; NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"; COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_PATH = $protectedPath; COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_SHA256 = (Get-FileHash $protectedPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH = $stagingPath; COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 = (Get-FileHash $stagingPath -Algorithm SHA256).Hash.ToLowerInvariant(); COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_PATH = $rollbackPath; COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_SHA256 = (Get-FileHash $rollbackPath -Algorithm SHA256).Hash.ToLowerInvariant() }
       foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
       function Invoke-RestMethod { throw "mock verifier failure" }
       try { . $scriptPath -BaseUrl "https://staging.example.test" -SourceMessageId "test-message" -TestRecipient "canary@testing.example" -BlockedReceiptPath $blockedReceiptPath } catch { }

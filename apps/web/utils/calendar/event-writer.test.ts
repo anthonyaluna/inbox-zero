@@ -4,12 +4,14 @@ import { createTestLogger } from "@/__tests__/helpers";
 import {
   cancelCalendarEvent,
   createCalendarEvent,
+  createCalendarEventWithReadback,
 } from "@/utils/calendar/event-writer";
 import { BookingLinkLocationType } from "@/generated/prisma/enums";
 
 const providerMocks = vi.hoisted(() => ({
   cancelEvent: vi.fn(),
   createEvent: vi.fn(),
+  getEvent: vi.fn(),
   googleConstructor: vi.fn(),
   microsoftConstructor: vi.fn(),
 }));
@@ -22,6 +24,7 @@ vi.mock("@/utils/calendar/providers/google-events", () => ({
     return {
       cancelEvent: providerMocks.cancelEvent,
       createEvent: providerMocks.createEvent,
+      getEvent: providerMocks.getEvent,
     };
   },
 }));
@@ -33,6 +36,7 @@ vi.mock("@/utils/calendar/providers/microsoft-events", () => ({
     return {
       cancelEvent: providerMocks.cancelEvent,
       createEvent: providerMocks.createEvent,
+      getEvent: providerMocks.getEvent,
     };
   },
 }));
@@ -90,6 +94,42 @@ describe("createCalendarEvent", () => {
       provider: "google",
       providerCalendarId: "primary",
       providerConnectionId: "connection-id",
+    });
+  });
+
+  it("reads an exact Microsoft event after creating it", async () => {
+    prisma.calendar.findFirst.mockResolvedValue({
+      calendarId: "microsoft-calendar",
+      connection: {
+        id: "connection-id",
+        provider: "microsoft",
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        expiresAt: new Date("2026-05-04T00:00:00.000Z"),
+      },
+    });
+    providerMocks.getEvent.mockResolvedValue({ id: "provider-event-id" });
+
+    const result = await createCalendarEventWithReadback({
+      attendees: [{ email: "guest@example.com" }],
+      destinationCalendarId: "calendar-row-id",
+      emailAccountId: "email-account-id",
+      endTime: new Date("2026-05-04T09:30:00.000Z"),
+      locationType: "CUSTOM",
+      locationValue: "Conference room",
+      logger: createTestLogger(),
+      startTime: new Date("2026-05-04T09:00:00.000Z"),
+      timezone: "America/Los_Angeles",
+      title: "Intro call",
+    });
+
+    expect(providerMocks.getEvent).toHaveBeenCalledWith({
+      calendarId: "microsoft-calendar",
+      eventId: "provider-event-id",
+    });
+    expect(result).toMatchObject({
+      id: "provider-event-id",
+      readback: { id: "provider-event-id" },
     });
   });
 

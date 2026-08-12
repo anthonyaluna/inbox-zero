@@ -95,7 +95,7 @@ describe("outlook client emulator configuration", () => {
     );
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("scope")).toBe(
-      "Mail.ReadWrite User.Read email offline_access openid profile",
+      "Calendars.ReadWrite Mail.ReadWrite User.Read email offline_access openid profile",
     );
     expect(getMicrosoftOauthAuthorizeUrl).toHaveBeenCalledWith();
   });
@@ -136,9 +136,10 @@ describe("parseExactMicrosoftScopes", () => {
   it("returns the one approved scope set in sorted order", () => {
     expect(
       parseExactMicrosoftScopes(
-        "profile,Mail.ReadWrite openid offline_access email User.Read",
+        "profile,Mail.ReadWrite Calendars.ReadWrite openid offline_access email User.Read",
       ),
     ).toEqual([
+      "Calendars.ReadWrite",
       "Mail.ReadWrite",
       "User.Read",
       "email",
@@ -150,9 +151,9 @@ describe("parseExactMicrosoftScopes", () => {
 
   it.each([
     "openid profile email User.Read offline_access",
-    "openid profile email User.Read offline_access Mail.ReadWrite MailboxSettings.ReadWrite",
-    "openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite",
-    "openid profile email User.Read offline_access Mail.ReadWrite Mail.Send",
+    "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite MailboxSettings.ReadWrite",
+    "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite Calendars.ReadWrite",
+    "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite Mail.Send",
   ])("rejects a non-exact Microsoft scope set: %s", (value) => {
     expect(() => parseExactMicrosoftScopes(value)).toThrow(
       "Microsoft scopes must exactly match the Coastline draft-only allowlist",

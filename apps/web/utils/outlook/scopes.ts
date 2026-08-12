@@ -3,6 +3,7 @@
 import { env } from "@/env";
 
 const COASTLINE_MICROSOFT_DRAFT_ONLY_SCOPES = [
+  "Calendars.ReadWrite",
   "Mail.ReadWrite",
   "User.Read",
   "email",
