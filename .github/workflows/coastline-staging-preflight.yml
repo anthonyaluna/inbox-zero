@@ -72,6 +72,12 @@ jobs:
       - name: Check working-tree patch
         run: git diff --check
 
+      - name: Assert promotion readiness contract
+        shell: pwsh
+        run: >-
+          ./scripts/Assert-CoastlineInboxZeroReadiness.ps1
+          -ExpectedSha '${{ github.sha }}'
+
   preflight:
     needs: [ref-guard, quality]
     if: ${{ github.ref == 'refs/heads/main' && github.sha == vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
@@ -128,3 +134,12 @@ jobs:
         run: >-
           ./scripts/Verify-CoastlineInboxZeroStaging.ps1
           -BaseUrl $env:COASTLINE_STAGING_BASE_URL
+          -OutputPath (Join-Path $env:RUNNER_TEMP 'coastline-inbox-zero-staging.json')
+
+      - name: Retain sanitized remote staging receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: coastline-inbox-zero-staging-${{ github.sha }}
+          path: ${{ runner.temp }}/coastline-inbox-zero-staging.json
+          if-no-files-found: error
+          retention-days: 7

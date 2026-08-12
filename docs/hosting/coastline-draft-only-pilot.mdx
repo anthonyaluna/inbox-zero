@@ -34,6 +34,29 @@ rollback path, and terminal readback.
 
 Use the protected GitHub environment `coastline-inbox-zero-staging` and bind
 the following variable names in the deployment; never commit their values.
+Its deployment branch rule is the protected `refs/heads/main` branch only, and
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA` must equal the intended 40-character
+artifact SHA. Configure at least one required staging reviewer and prevent
+self-review. Reviewer identities remain `Pending` until independently read back
+from the GitHub Environment and retained in an out-of-repository receipt.
+
+The required environment secrets are
+`COASTLINE_INBOX_ZERO_STAGING_DATABASE_URL`,
+`COASTLINE_INBOX_ZERO_STAGING_AUTH_SECRET`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_ID`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_SECRET`, and
+`COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET`. Required non-secret variables are
+`COASTLINE_INBOX_ZERO_STAGING_BASE_URL`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL`, and
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA`. Store names in documentation and receipts;
+never store their values in Git.
+
+Workflow ref and SHA guards complement environment protection. They do not
+prove or replace the environment's deployment-branch restriction, required
+reviewers, self-review prevention, or protected secret/variable configuration.
+The machine-checkable contract is documented in
+[`docs/operations/inbox-zero-promotion-evidence-contract.md`](../operations/inbox-zero-promotion-evidence-contract.md).
+
 `MICROSOFT_BASE_URL` must resolve to
 `localhost` or the `microsoft-emulator` Docker service, not Microsoft Graph.
 `NEXT_PUBLIC_BASE_URL` is the staging origin; register

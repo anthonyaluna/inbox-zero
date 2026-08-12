@@ -116,6 +116,12 @@ jobs:
           Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0.0
           Invoke-Pester -Path scripts/tests -CI
 
+      - name: Assert Coastline promotion readiness contract
+        shell: pwsh
+        run: >-
+          ./scripts/Assert-CoastlineInboxZeroReadiness.ps1
+          -ExpectedSha '${{ github.sha }}'
+
       - name: Run package tests
         run: pnpm test:packages
 
