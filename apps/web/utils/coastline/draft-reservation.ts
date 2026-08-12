@@ -55,22 +55,31 @@ export async function reserveOrReconcileCoastlineDraft({
     );
   }
 
-  if (!reservation.draftId && reservation.terminalState === "reserved") {
-    const claim = await prisma.coastlineDraftReservation.updateMany({
-      where: {
-        id: reservation.id,
-        terminalState: "reserved",
-        draftId: null,
-        creationClaimId: null,
-      },
-      data: { creationClaimId: actionId },
-    });
-    if (claim.count === 1) {
-      return {
-        reservationId: reservation.id,
-        draftId: null,
-        state: "reserved",
-      };
+  const canRecoverClaimedReservation =
+    !reservation.draftId &&
+    reservation.terminalState === "recovery_required" &&
+    !!reservation.creationClaimId;
+  if (
+    !reservation.draftId &&
+    (reservation.terminalState === "reserved" || canRecoverClaimedReservation)
+  ) {
+    if (reservation.terminalState === "reserved") {
+      const claim = await prisma.coastlineDraftReservation.updateMany({
+        where: {
+          id: reservation.id,
+          terminalState: "reserved",
+          draftId: null,
+          creationClaimId: null,
+        },
+        data: { creationClaimId: actionId },
+      });
+      if (claim.count === 1) {
+        return {
+          reservationId: reservation.id,
+          draftId: null,
+          state: "reserved",
+        };
+      }
     }
 
     const providerRecovery = await recoverProviderDraft({
@@ -79,6 +88,14 @@ export async function reserveOrReconcileCoastlineDraft({
       client,
     });
     if (providerRecovery) return providerRecovery;
+
+    if (reservation.terminalState === "recovery_required") {
+      return {
+        reservationId: reservation.id,
+        draftId: null,
+        state: "recovery_required",
+      };
+    }
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const recovered = await prisma.coastlineDraftReservation.findUnique({
@@ -170,7 +187,7 @@ async function recoverProviderDraft({
     where: {
       id: reservationId,
       draftId: null,
-      terminalState: "reserved",
+      terminalState: { in: ["reserved", "recovery_required"] },
     },
     data: {
       draftId,

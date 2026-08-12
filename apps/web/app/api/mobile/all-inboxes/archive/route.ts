@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createEmailProvider } from "@/utils/email/provider";
 import { withAuth } from "@/utils/middleware";
 import prisma from "@/utils/prisma";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 import { mapWithConcurrency } from "../map-with-concurrency";
 
 const ACCOUNT_CONCURRENCY = 4;
@@ -25,7 +26,7 @@ const bodySchema = z.object({
 type ArchiveThread = z.infer<typeof bodySchema>["threads"][number];
 type ArchiveThreadRef = Pick<ArchiveThread, "accountId" | "threadId">;
 
-export const POST = withAuth("mobile/all-inboxes/archive", async (request) => {
+const archiveAllInboxesPost = withAuth("mobile/all-inboxes/archive", async (request) => {
   const { threads } = bodySchema.parse(await request.json());
   const threadsByKey = new Map<
     string,
@@ -130,6 +131,11 @@ export const POST = withAuth("mobile/all-inboxes/archive", async (request) => {
     failed,
   });
 });
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "mobile/all-inboxes/archive", mutation: "ARCHIVE_THREADS" },
+  archiveAllInboxesPost,
+);
 
 function toArchiveThreadRef(thread: ArchiveThread): ArchiveThreadRef {
   return {

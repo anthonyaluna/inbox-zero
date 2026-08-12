@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withEmailProvider } from "@/utils/middleware";
 import { isThreadNotFoundError } from "@/utils/email/thread-not-found";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const paramsSchema = z.object({ id: z.string() });
 
@@ -11,7 +12,7 @@ const paramsSchema = z.object({ id: z.string() });
  * Gmail puts the thread back under its pre-trash labels; Outlook has no such
  * record and moves it to the inbox.
  */
-export const POST = withEmailProvider(
+const untrashThreadPost = withEmailProvider(
   "threads/untrash",
   async (request, context) => {
     const params = await context.params;
@@ -32,4 +33,9 @@ export const POST = withEmailProvider(
 
     return NextResponse.json({ success: true });
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "threads/untrash", mutation: "UNTRASH_THREAD" },
+  untrashThreadPost,
 );

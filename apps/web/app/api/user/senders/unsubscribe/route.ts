@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import { withEmailAccount } from "@/utils/middleware";
 import { unsubscribeSenderBody } from "@/utils/actions/unsubscriber.validation";
 import { unsubscribeSenderAndMark } from "@/utils/senders/unsubscribe";
-import { env } from "@/env";
-import {
-  assertCoastlineMutationAllowed,
-  CoastlineDraftOnlyPolicyError,
-} from "@/utils/coastline/draft-only-policy";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export type UnsubscribeSenderResponse = Awaited<
   ReturnType<typeof unsubscribeSenderAndMark>
@@ -38,22 +34,7 @@ const unsubscribePost = withEmailAccount(
   },
 );
 
-export const POST: typeof unsubscribePost = async (request, context) => {
-  try {
-    assertCoastlineMutationAllowed({
-      surface: "user/senders/unsubscribe",
-      mutation: "UNSUBSCRIBE",
-      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
-    });
-  } catch (error) {
-    if (error instanceof CoastlineDraftOnlyPolicyError) {
-      return NextResponse.json(
-        { error: error.message, errorCode: error.code, isKnownError: true },
-        { status: 400 },
-      );
-    }
-    throw error;
-  }
-
-  return unsubscribePost(request, context);
-};
+export const POST = withCoastlineMutationGuard(
+  { surface: "user/senders/unsubscribe", mutation: "UNSUBSCRIBE" },
+  unsubscribePost,
+);

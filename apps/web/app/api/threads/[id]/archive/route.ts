@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withEmailProvider } from "@/utils/middleware";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const paramsSchema = z.object({ id: z.string() });
 
-export const POST = withEmailProvider(
+const archiveThreadPost = withEmailProvider(
   "threads/archive",
   async (request, context) => {
     const params = await context.params;
@@ -29,4 +30,9 @@ export const POST = withEmailProvider(
       );
     }
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "threads/archive", mutation: "ARCHIVE_THREAD" },
+  archiveThreadPost,
 );

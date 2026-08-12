@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withEmailProvider } from "@/utils/middleware";
 import { forwardMessage } from "@/utils/email/forward-message";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const bodySchema = z.object({
   messageId: z.string().trim().min(1),
@@ -22,7 +23,7 @@ export type ForwardMessageResponse = {
  * original attachments and builds the forwarded subject and quoted body
  * server-side, so the caller only supplies recipients and an optional comment.
  */
-export const POST = withEmailProvider("messages/forward", async (request) => {
+const forwardMessagePost = withEmailProvider("messages/forward", async (request) => {
   const { messageId, to, cc, bcc, content } = bodySchema.parse(
     await request.json(),
   );
@@ -44,3 +45,8 @@ export const POST = withEmailProvider("messages/forward", async (request) => {
     threadId: message.threadId,
   } satisfies ForwardMessageResponse);
 });
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "messages/forward", mutation: "FORWARD_EMAIL" },
+  forwardMessagePost,
+);

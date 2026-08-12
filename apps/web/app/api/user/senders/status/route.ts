@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import { withEmailProvider } from "@/utils/middleware";
 import { setSenderStatusBody } from "@/utils/actions/unsubscriber.validation";
 import { setSenderStatusWithAutoArchive } from "@/utils/senders/unsubscribe";
-import { env } from "@/env";
-import {
-  assertCoastlineMutationAllowed,
-  CoastlineDraftOnlyPolicyError,
-} from "@/utils/coastline/draft-only-policy";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export type SetSenderStatusResponse = Awaited<
   ReturnType<typeof setSenderStatusWithAutoArchive>
@@ -38,22 +34,7 @@ const setSenderStatusPost = withEmailProvider(
   },
 );
 
-export const POST: typeof setSenderStatusPost = async (request, context) => {
-  try {
-    assertCoastlineMutationAllowed({
-      surface: "user/senders/status",
-      mutation: "SET_SENDER_STATUS",
-      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
-    });
-  } catch (error) {
-    if (error instanceof CoastlineDraftOnlyPolicyError) {
-      return NextResponse.json(
-        { error: error.message, errorCode: error.code, isKnownError: true },
-        { status: 400 },
-      );
-    }
-    throw error;
-  }
-
-  return setSenderStatusPost(request, context);
-};
+export const POST = withCoastlineMutationGuard(
+  { surface: "user/senders/status", mutation: "SET_SENDER_STATUS" },
+  setSenderStatusPost,
+);

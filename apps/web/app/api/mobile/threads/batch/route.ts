@@ -4,6 +4,7 @@ import { withEmailProvider } from "@/utils/middleware";
 import { runWithBoundedConcurrency } from "@/utils/async";
 import { isThreadNotFoundError } from "@/utils/email/thread-not-found";
 import type { EmailProvider } from "@/utils/email/types";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const THREAD_CONCURRENCY = 4;
 
@@ -25,7 +26,7 @@ export type ThreadBatchResponse = {
  * that no longer exists counts as succeeded, since the action it would have
  * undone is already gone.
  */
-export const POST = withEmailProvider(
+const mobileThreadBatchPost = withEmailProvider(
   "mobile/threads/batch",
   async (request) => {
     const { action, threadIds } = bodySchema.parse(await request.json());
@@ -64,6 +65,11 @@ export const POST = withEmailProvider(
       failed,
     } satisfies ThreadBatchResponse);
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "mobile/threads/batch", mutation: "MUTATE_THREADS" },
+  mobileThreadBatchPost,
 );
 
 async function runThreadAction({

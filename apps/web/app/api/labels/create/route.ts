@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withEmailProvider } from "@/utils/middleware";
 import { z } from "zod";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const createLabelBody = z.object({
   name: z.string(),
@@ -9,7 +10,7 @@ const createLabelBody = z.object({
 
 export const maxDuration = 15;
 
-export const POST = withEmailProvider(async (request) => {
+const createLabelPost = withEmailProvider(async (request) => {
   const { emailProvider } = request;
   const body = await request.json();
   const { name, description } = createLabelBody.parse(body);
@@ -21,3 +22,8 @@ export const POST = withEmailProvider(async (request) => {
 
   return NextResponse.json({ label });
 });
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "labels/create", mutation: "CREATE_LABEL" },
+  createLabelPost,
+);

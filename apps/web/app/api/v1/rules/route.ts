@@ -6,6 +6,7 @@ import { toRuleWriteInput } from "@/app/api/v1/rules/request";
 import { apiRuleSelect, serializeRule } from "@/app/api/v1/rules/serializers";
 import { ruleRequestBodySchema } from "@/app/api/v1/rules/validation";
 import { assertCanUseDigestsIfNeeded } from "@/utils/premium/server";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export const GET = withAccountApiKey(
   "v1/rules",
@@ -25,7 +26,7 @@ export const GET = withAccountApiKey(
   },
 );
 
-export const POST = withAccountApiKey(
+const createRulePost = withAccountApiKey(
   "v1/rules",
   ["RULES_WRITE"],
   async (request) => {
@@ -58,4 +59,9 @@ export const POST = withAccountApiKey(
 
     return NextResponse.json({ rule: serializeRule(rule) }, { status: 201 });
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "v1/rules", mutation: "CREATE_RULE" },
+  createRulePost,
 );
