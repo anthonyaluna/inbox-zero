@@ -46,7 +46,7 @@ The lane is promotion-ready only when all of the following have evidence:
 
 **Files:**
 - Modify: `apps/web/prisma/schema.prisma` near `model ExecutedAction`
-- Create: `apps/web/prisma/migrations/<timestamp>_add_coastline_draft_reservations/migration.sql`
+- Create: `apps/web/prisma/migrations/20260811150000_add_coastline_draft_reservations/migration.sql`
 - Modify: `apps/web/utils/ai/choose-rule/draft-management.ts`
 - Modify: `apps/web/utils/ai/choose-rule/execute.ts`
 - Test: `apps/web/utils/ai/choose-rule/draft-management.test.ts`
