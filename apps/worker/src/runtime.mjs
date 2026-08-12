@@ -172,10 +172,7 @@ export function getWorkerConfig(env) {
     internalApiUrl,
     redisUrl,
     workerQueues: env.WORKER_QUEUES,
-    workerArtifactSha:
-      env.COASTLINE_WORKER_ARTIFACT_SHA ||
-      env.COASTLINE_STAGING_ARTIFACT_SHA ||
-      env.COASTLINE_INBOX_ZERO_PROTECTED_SHA,
+    workerArtifactSha: env.COASTLINE_WORKER_ARTIFACT_SHA,
     workerRuntimeInstanceId:
       env.COASTLINE_WORKER_RUNTIME_INSTANCE_ID || env.HOSTNAME,
   };

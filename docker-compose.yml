@@ -102,6 +102,8 @@ services:
       - inbox-zero-network
     environment:
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://web:3000}
+      COASTLINE_WORKER_ARTIFACT_SHA: ${COASTLINE_WORKER_ARTIFACT_SHA:?COASTLINE_WORKER_ARTIFACT_SHA is required for worker runtime proof}
+      COASTLINE_WORKER_RUNTIME_INSTANCE_ID: ${COASTLINE_WORKER_RUNTIME_INSTANCE_ID:?COASTLINE_WORKER_RUNTIME_INSTANCE_ID is required for worker runtime proof}
     restart: always
     profiles:
       - queue-worker

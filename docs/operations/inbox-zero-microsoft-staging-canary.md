@@ -39,10 +39,9 @@ put their values in Git, CI logs, receipts, shell history, or this runbook.
 - `NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`.
 
 The worker, not the web process, publishes the runtime binding that backs the
-staging evidence endpoint. The deployed worker must receive the same protected
-artifact SHA through `COASTLINE_WORKER_ARTIFACT_SHA`,
-`COASTLINE_STAGING_ARTIFACT_SHA`, or
-`COASTLINE_INBOX_ZERO_PROTECTED_SHA`, and a deployment-unique
+staging evidence endpoint. The deployed worker must receive its immutable
+`COASTLINE_WORKER_ARTIFACT_SHA` directly from the deployer; it must not fall
+back to a web staging or protected-SHA variable. It also needs a deployment-unique
 `COASTLINE_WORKER_RUNTIME_INSTANCE_ID` (or a safe hostname). On `ready` and at
 least every 30 seconds, it writes a 120-second, sanitized runtime binding for
 each named BullMQ worker. The binding contains only schema version, the fixed
@@ -50,6 +49,13 @@ worker-owned source, opaque attestation ID, deterministic BullMQ client
 identity, queue identity, running state, artifact SHA, and heartbeat timestamp.
 The web route accepts a binding only when that identity is currently returned by
 BullMQ. It never reads a web environment JSON record as worker proof.
+
+The protected staging workflow carries the same SHA as a verification input,
+but it is not a substitute for the worker deployment variable. A worker that
+lacks `COASTLINE_WORKER_ARTIFACT_SHA` must not publish an attestation, and the
+remote verifier must fail closed. The deployment controller injects the worker
+image's immutable artifact SHA independently; the verification workflow does
+not derive or supply it from `COASTLINE_INBOX_ZERO_PROTECTED_SHA`.
 
 The approved Microsoft app registration must be dedicated to staging, bind its
 redirect URI to the exact staging hostname, have documented tenant/client ID

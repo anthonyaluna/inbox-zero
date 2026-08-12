@@ -1,4 +1,5 @@
 $scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Run-CoastlineInboxZeroMicrosoftCanary.ps1"
+$assemblerPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Assemble-CoastlineInboxZeroPromotionCanaryEvidence.ps1"
 
 Describe "Coastline Microsoft canary runner" {
   It "returns nonzero and writes no receipt when prerequisites fail" {
@@ -133,6 +134,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
       function Invoke-RestMethod {
         param($Uri, $Method, $Headers, $ContentType, $Body, $TimeoutSec)
+        $script:restCalls++
         if ($Method -eq "Post") {
           $request = $Body | ConvertFrom-Json
           $script:runNonce = $request.runNonce
@@ -148,12 +150,18 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       }
 
       $output = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient
-      $receiptPath = Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json" | Select-Object -First 1 -ExpandProperty FullName
+      $receiptPath = Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-microsoft-canary-*.json" | Select-Object -First 1 -ExpandProperty FullName
       $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
       $receipt.idempotencyDraftCount | Should Be 1
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-runner-provenance-*.json").Count | Should Be 1
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json").Count | Should Be 1
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-replay-evidence-*.json").Count | Should Be 1
+      $bundlePath = Join-Path $testRoot "promotion-bundle.json"
+      & $assemblerPath -ExpectedSha (& git rev-parse HEAD).Trim() -RemoteStagingReceiptPath $stagingEvidencePath -RunnerProvenancePath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-runner-provenance-*.json" | Select-Object -First 1 -ExpandProperty FullName) -DedicatedMailboxEvidencePath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json" | Select-Object -First 1 -ExpandProperty FullName) -CanaryReceiptPath $receiptPath -ReplayReceiptPath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-replay-evidence-*.json" | Select-Object -First 1 -ExpandProperty FullName) -OutputPath $bundlePath | Out-Null
+      (Get-Content -LiteralPath $bundlePath -Raw | ConvertFrom-Json).schema_version | Should Be "coastline_inbox_zero_promotion_canary_evidence.v1"
       ($output | Out-String) | Should Not Match "COASTLINE_CANARY_RECEIPT_INVALID"
 
-      Remove-Item -LiteralPath $receiptPath -Force
+      Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json" | Remove-Item -Force
       $stagingEvidence = Get-Content -LiteralPath $stagingEvidencePath -Raw | ConvertFrom-Json
       $stagingEvidence.checks = @()
       $stagingEvidence | ConvertTo-Json -Depth 5 -Compress | Set-Content -LiteralPath $stagingEvidencePath -Encoding utf8NoBOM
@@ -167,6 +175,20 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       }
       ($failedOutput | Out-String) | Should Match "COASTLINE_CANARY_STAGING_EVIDENCE_INVALID"
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
+
+      $stagingEvidence.checks = @(@{ code = "WEB_HEALTH"; status = "pass" }, @{ code = "CRON_UNAUTHENTICATED_REJECTED"; status = "pass" }, @{ code = "CRON_AUTHENTICATED_SUCCESS"; status = "pass" }, @{ code = "REMOTE_ARTIFACT_WORKER_QUEUE"; status = "pass" })
+      $stagingEvidence.worker_heartbeat_at = ([DateTimeOffset]::UtcNow.AddMinutes(1)).ToString("o")
+      $stagingEvidence | ConvertTo-Json -Depth 5 -Compress | Set-Content -LiteralPath $stagingEvidencePath -Encoding utf8NoBOM
+      $environment.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 = (Get-FileHash -LiteralPath $stagingEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+      Set-Item -Path Env:COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 -Value $environment.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256
+      $script:restCalls = 0
+      try {
+        $timestampFailure = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient 2>&1
+      } catch {
+        $timestampFailure = $_
+      }
+      ($timestampFailure | Out-String) | Should Match "COASTLINE_CANARY_STAGING_EVIDENCE_INVALID"
+      $script:restCalls | Should Be 0
     } finally {
       Remove-Item Function:Invoke-RestMethod -ErrorAction SilentlyContinue
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue

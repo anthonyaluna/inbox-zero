@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   getWorkerConfig,
@@ -69,7 +70,7 @@ test("worker runtime binding uses the deterministic BullMQ client name, not Work
   );
 });
 
-test("worker runtime binding falls back to the protected staging artifact binding", () => {
+test("worker refuses a staging artifact fallback and requires its immutable artifact SHA", () => {
   assert.equal(
     getWorkerConfig({
       REDIS_URL: "redis://example.test",
@@ -78,7 +79,7 @@ test("worker runtime binding falls back to the protected staging artifact bindin
       COASTLINE_STAGING_ARTIFACT_SHA: "a".repeat(40),
       COASTLINE_WORKER_RUNTIME_INSTANCE_ID: "coastline-staging-a",
     }).workerArtifactSha,
-    "a".repeat(40),
+    undefined,
   );
 });
 
@@ -89,7 +90,7 @@ test("worker runtime binding publishes with the exact configured client identity
       REDIS_URL: "redis://example.test",
       INTERNAL_API_KEY: "test-key",
       INTERNAL_API_URL: "https://web.example.test",
-      COASTLINE_STAGING_ARTIFACT_SHA: "a".repeat(40),
+      COASTLINE_WORKER_ARTIFACT_SHA: "a".repeat(40),
       COASTLINE_WORKER_RUNTIME_INSTANCE_ID: "coastline-staging-a",
       WORKER_QUEUES: "automation-jobs:1",
     },
@@ -112,4 +113,16 @@ test("worker runtime binding publishes with the exact configured client identity
     workerRuntimeBindingKey("bull:YXV0b21hdGlvbi1qb2Jz:w:coastline-staging-a"),
   );
   await runtime.close();
+});
+
+test("compose refuses to start the worker proof path without immutable worker bindings", async () => {
+  const compose = await readFile(new URL("../../../docker-compose.yml", import.meta.url), "utf8");
+  assert.match(
+    compose,
+    /COASTLINE_WORKER_ARTIFACT_SHA: \$\{COASTLINE_WORKER_ARTIFACT_SHA:\?COASTLINE_WORKER_ARTIFACT_SHA is required for worker runtime proof\}/,
+  );
+  assert.match(
+    compose,
+    /COASTLINE_WORKER_RUNTIME_INSTANCE_ID: \$\{COASTLINE_WORKER_RUNTIME_INSTANCE_ID:\?COASTLINE_WORKER_RUNTIME_INSTANCE_ID is required for worker runtime proof\}/,
+  );
 });

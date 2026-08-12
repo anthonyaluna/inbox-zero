@@ -196,6 +196,15 @@ function Test-FreshEvidenceTimestamp {
   return $time -ge $now.AddMinutes(-30) -and $time -le $now.AddMinutes(2)
 }
 
+function Test-OrderedStagingTimestamps {
+  param([object]$StartedAt, [object]$WorkerHeartbeatAt, [object]$CompletedAt)
+  if (-not (Test-IsoTimestamp $StartedAt) -or -not (Test-IsoTimestamp $WorkerHeartbeatAt) -or -not (Test-IsoTimestamp $CompletedAt)) { return $false }
+  $started = [DateTimeOffset]::Parse([string]$StartedAt)
+  $heartbeat = [DateTimeOffset]::Parse([string]$WorkerHeartbeatAt)
+  $completed = [DateTimeOffset]::Parse([string]$CompletedAt)
+  return $started -le $heartbeat -and $heartbeat -le $completed
+}
+
 function Get-IndependentEvidence {
   param([string]$Base, [string]$Kind, [hashtable]$Headers, [hashtable]$Query)
   $uri = [UriBuilder]::new("$($Base.TrimEnd('/'))/$Kind")
@@ -360,6 +369,7 @@ try {
     $stagingEvidence.outcome -ceq "pass" -and $stagingEvidence.cron_evidence_id -match '^[a-f0-9]{64}$' -and
     -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_worker_identity) -and -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_queue_identity) -and
     (Test-FreshEvidenceTimestamp $stagingEvidence.completed_at) -and (Test-FreshEvidenceTimestamp $stagingEvidence.worker_heartbeat_at) -and
+    (Test-OrderedStagingTimestamps $stagingEvidence.started_at $stagingEvidence.worker_heartbeat_at $stagingEvidence.completed_at) -and
     $stagingEvidence.service_states.web -ceq "healthy" -and $stagingEvidence.service_states.worker -ceq "running" -and
     $stagingEvidence.service_states.queue -ceq "reachable" -and $stagingEvidence.service_states.cron_unauthenticated -ceq "rejected" -and
     $stagingEvidence.service_states.cron_authenticated -ceq "verified" -and $validStagingChecks
@@ -460,6 +470,52 @@ try {
   Stop-Canary -Code "COASTLINE_CANARY_RECEIPT_INVALID" -Message "The canary receipt was invalid or contained unapproved fields."
 }
 
-$receiptPath = Join-Path $receiptDirectory ("inbox-zero-microsoft-canary-{0}.json" -f [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ"))
-$response | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM
+$receiptSuffix = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+$runId = Get-Sha256 "$currentSha|$runNonce|$($registration.registrationId)"
+$runnerProvenance = [ordered]@{
+  schema_version = "coastline_inbox_zero_canary_runner_provenance.v1"
+  artifact_sha = $currentSha
+  run_id = $runId
+  run_nonce = $runNonce
+  executor_registration_id = $registration.registrationId
+  executor_registration_sha256 = $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256
+  executor_id = $registration.executorId
+  verifier_id = $registration.independentVerifierId
+}
+$dedicatedMailbox = [ordered]@{
+  schema_version = "coastline_inbox_zero_dedicated_mailbox_evidence.v1"
+  artifact_sha = $currentSha
+  run_id = $runId
+  run_nonce = $runNonce
+  verified_at = $evidence["identity"].verifiedAt
+  environment = "staging"
+  mailbox_identity_sha256 = $expected.mailboxSha256
+  account_id = $expected.accountId
+  identity_evidence_id = $evidence["identity"].evidenceId
+  mailbox_purpose = "dedicated_non_production_canary"
+  is_shared_mailbox = $false
+  is_production_mailbox = $false
+}
+$replayEvidence = [ordered]@{
+  schema_version = "coastline_inbox_zero_replay_evidence.v1"
+  artifact_sha = $currentSha
+  run_id = $runId
+  run_nonce = $runNonce
+  verified_at = $evidence["idempotency-replay"].verifiedAt
+  terminal_state = "created_verified"
+  idempotency_key = $response.idempotencyKey
+  draft_id = $response.draftId
+  idempotency_replay = $response.idempotencyReplay
+  replay_graph_readback_evidence_id = $response.replayGraphReadbackEvidenceId
+  no_duplicate_evidence_id = $response.noDuplicateEvidenceId
+  idempotency_draft_count = $response.idempotencyDraftCount
+}
+try {
+  $response | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-microsoft-canary-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
+  $runnerProvenance | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-runner-provenance-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
+  $dedicatedMailbox | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-dedicated-mailbox-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
+  $replayEvidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-replay-evidence-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_EVIDENCE_PERSISTENCE_INVALID" -Message "The sanitized promotion evidence components could not be persisted."
+}
 $response | ConvertTo-Json -Depth 4
