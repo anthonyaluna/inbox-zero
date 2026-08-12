@@ -155,11 +155,14 @@ function isQueueWorkerIdentity(identity: string, queueIdentity: string) {
   const queueName = queueIdentity.startsWith("bullmq:")
     ? queueIdentity.slice("bullmq:".length)
     : "";
-  const prefix = `bull:${Buffer.from(queueName).toString("base64")}:w:`;
+  if (!queueName) return false;
+
+  const queueClientName = `bull:${Buffer.from(queueName).toString("base64")}`;
+  const namedWorkerPrefix = `${queueClientName}:w:`;
   return (
-    Boolean(queueName) &&
-    identity.startsWith(prefix) &&
-    identity.length > prefix.length
+    identity === queueClientName ||
+    (identity.startsWith(namedWorkerPrefix) &&
+      identity.length > namedWorkerPrefix.length)
   );
 }
 
@@ -190,14 +193,12 @@ export async function readCoastlineStagingRuntimeBinding({
       return queue.getWorkers();
     }, timeoutMs);
     const queueIdentity = `bullmq:${queue.queueName}`;
-    const expectedClientPrefix = `bull:${Buffer.from(queue.queueName).toString("base64")}:w:`;
     const workerRegistrations = workerClients
       .map((registration) => registration.name?.trim())
       .filter(
         (identity): identity is string =>
           typeof identity === "string" &&
-          identity.startsWith(expectedClientPrefix) &&
-          identity.length > expectedClientPrefix.length,
+          isQueueWorkerIdentity(identity, queueIdentity),
       )
       .map((identity) => ({
         identity,

@@ -100,6 +100,21 @@ describe("createCoastlineRemoteStagingEvidence", () => {
     );
   });
 
+  it("accepts the unnamed identity emitted by the deployed BullMQ worker", () => {
+    const unnamedWorker = {
+      identity: "bull:YXV0b21hdGlvbi1qb2Jz",
+      queueIdentity: "bullmq:automation-jobs",
+      status: "running" as const,
+    };
+
+    expect(
+      createValidEvidence({ workerRegistrations: [unnamedWorker] }),
+    ).toMatchObject({
+      workerIdentity: unnamedWorker.identity,
+      workerStatus: "running",
+    });
+  });
+
   it("rejects an unreachable deployed queue", () => {
     expect(() => createValidEvidence({ queueReachable: false })).toThrowError(
       expect.objectContaining({ code: "COASTLINE_STAGING_QUEUE_UNREACHABLE" }),
@@ -146,6 +161,32 @@ describe("createCoastlineRemoteStagingEvidence", () => {
     });
 
     expect(runtime.workerRegistrations).toEqual([runningWorker()]);
+  });
+
+  it("discovers the unnamed identity emitted by the deployed BullMQ worker", async () => {
+    const runtime = await readCoastlineStagingRuntimeBinding({
+      queueName: "automation-jobs",
+      protectedArtifactSha: PROTECTED_SHA,
+      deployedArtifactSha: PROTECTED_SHA,
+      createQueueRuntime: () => ({
+        queueName: "automation-jobs",
+        waitUntilReady: async () => undefined,
+        getWorkers: async () => [
+          { name: "GCP does not support client list" },
+          { name: "bull:b3RoZXItcXVldWU=" },
+          { name: "bull:YXV0b21hdGlvbi1qb2Jz" },
+        ],
+        close: async () => undefined,
+      }),
+    });
+
+    expect(runtime.workerRegistrations).toEqual([
+      {
+        identity: "bull:YXV0b21hdGlvbi1qb2Jz",
+        queueIdentity: "bullmq:automation-jobs",
+        status: "running",
+      },
+    ]);
   });
 });
 
