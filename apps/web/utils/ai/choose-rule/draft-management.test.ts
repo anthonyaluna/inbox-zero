@@ -737,6 +737,75 @@ describe("createOrReconcileCoastlineDraft", () => {
     });
     expect(createDraft).not.toHaveBeenCalled();
   });
+
+  it("reuses the provider draft after action receipt persistence fails", async () => {
+    mockReserve
+      .mockResolvedValueOnce({
+        reservationId: "reservation-1",
+        draftId: null,
+        state: "reserved",
+      })
+      .mockResolvedValueOnce({
+        reservationId: "reservation-1",
+        draftId: "draft-123",
+        state: "created_unverified",
+      });
+    mockFindUnique.mockResolvedValue(null);
+    const createDraft = vi.fn().mockResolvedValue({ draftId: "draft-123" });
+    const getDraft = vi.fn().mockResolvedValue(
+      createParsedMessage({
+        id: "draft-123",
+        threadId: "thread-456",
+        subject: "Property documents",
+        headers: {
+          from: "account@example.com",
+          to: "recipient@example.com",
+          subject: "Property documents",
+          date: "2026-08-11T12:00:00.000Z",
+        },
+        textPlain: "I will send the lease packet this afternoon.",
+      }),
+    );
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-1",
+        proposal,
+        client: { getDraft } as unknown as EmailProvider,
+        createDraft,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
+    });
+
+    mockFindUnique.mockReset();
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...createInboxZeroDraftReceipt({ proposal, draftId: "draft-123" }),
+            readBackAt: "2026-08-11T12:00:01.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+
+    await createOrReconcileCoastlineDraft({
+      actionId: "action-2",
+      proposal,
+      client: { getDraft } as unknown as EmailProvider,
+      createDraft,
+      logger,
+    });
+
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("extractDraftPlainText", () => {

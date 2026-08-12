@@ -5,7 +5,10 @@ import {
   createInboxZeroDraftProposal,
   buildDraftIdempotencyKey,
 } from "@/utils/coastline/draft-proposal";
-import { reserveOrReconcileCoastlineDraft } from "@/utils/coastline/draft-reservation";
+import {
+  reconcileCoastlineDraft,
+  reserveOrReconcileCoastlineDraft,
+} from "@/utils/coastline/draft-reservation";
 
 vi.mock("@/utils/prisma", () => ({
   default: {
@@ -13,6 +16,7 @@ vi.mock("@/utils/prisma", () => ({
       upsert: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -42,9 +46,13 @@ describe("reserveOrReconcileCoastlineDraft", () => {
     upsert: Mock;
     findUnique: Mock;
     update: Mock;
+    updateMany: Mock;
   };
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    reservations.updateMany.mockResolvedValue({ count: 1 });
+  });
 
   it("reuses one durable reservation for separate action rows", async () => {
     reservations.upsert
@@ -120,6 +128,7 @@ describe("reserveOrReconcileCoastlineDraft", () => {
       draftId: "draft-1",
       terminalState: "created_unverified",
     });
+    reservations.updateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(
       reserveOrReconcileCoastlineDraft({
@@ -133,5 +142,74 @@ describe("reserveOrReconcileCoastlineDraft", () => {
       draftId: "draft-1",
       state: "created_unverified",
     });
+  });
+
+  it("persists recovery-required state when a creator claim remains ambiguous", async () => {
+    reservations.upsert.mockResolvedValue({
+      id: "reservation-1",
+      proposalFingerprint: "fingerprint-1",
+      executedActionId: "action-1",
+      draftId: null,
+      terminalState: "reserved",
+    });
+    reservations.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    reservations.findUnique.mockResolvedValue(null);
+
+    await expect(
+      reserveOrReconcileCoastlineDraft({
+        actionId: "action-2",
+        proposal,
+        proposalFingerprint: "fingerprint-1",
+        client: {} as EmailProvider,
+      }),
+    ).resolves.toMatchObject({ state: "recovery_required" });
+
+    expect(reservations.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: "reservation-1",
+        terminalState: { not: "created_verified" },
+      },
+      data: {
+        terminalState: "recovery_required",
+        recoverableErrorCode: "COASTLINE_DRAFT_RECOVERY_REQUIRED",
+      },
+    });
+  });
+
+  it("requires full proposal readback before marking a draft verified", async () => {
+    const client = {
+      getDraft: vi.fn().mockResolvedValue({
+        id: "draft-1",
+        threadId: "thread-1",
+        snippet: "",
+        historyId: "",
+        inline: [],
+        subject: "Subject",
+        headers: {
+          from: "account@example.com",
+          to: "other@example.com",
+          subject: "Subject",
+          date: "2026-08-11T12:00:00.000Z",
+        },
+        textPlain: "Body",
+      }),
+    } as unknown as EmailProvider;
+
+    await expect(
+      reconcileCoastlineDraft({
+        reservationId: "reservation-1",
+        draftId: "draft-1",
+        proposal,
+        client,
+      }),
+    ).rejects.toMatchObject({ code: "COASTLINE_DRAFT_READBACK_FAILED" });
+
+    expect(reservations.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ terminalState: "created_verified" }),
+      }),
+    );
   });
 });

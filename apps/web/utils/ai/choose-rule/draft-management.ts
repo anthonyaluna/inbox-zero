@@ -219,8 +219,13 @@ export async function createOrReconcileCoastlineDraft({
       await recordCoastlineDraftCreation({
         reservationId: reservation.reservationId,
         draftId,
+        creationClaimId: actionId,
       });
     } catch (error) {
+      await markRecoveryRequired(
+        reservation.reservationId,
+        "COASTLINE_DRAFT_RECOVERY_REQUIRED",
+      );
       throw createDraftRecoveryError(
         error instanceof Error
           ? error.message

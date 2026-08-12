@@ -757,6 +757,7 @@ model CoastlineDraftReservation {
   proposalFingerprint  String
   executedActionId     String?                        @unique
   executedAction       ExecutedAction?                @relation(fields: [executedActionId], references: [id], onDelete: SetNull)
+  creationClaimId      String?
   draftId              String?
   terminalState        CoastlineDraftReservationState @default(reserved)
   recoverableErrorCode String?

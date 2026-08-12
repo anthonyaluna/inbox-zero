@@ -10,6 +10,7 @@ CREATE TABLE "CoastlineDraftReservation" (
     "sourceMessageId" TEXT NOT NULL,
     "proposalFingerprint" TEXT NOT NULL,
     "executedActionId" TEXT,
+    "creationClaimId" TEXT,
     "draftId" TEXT,
     "terminalState" "CoastlineDraftReservationState" NOT NULL DEFAULT 'reserved',
     "recoverableErrorCode" TEXT,
