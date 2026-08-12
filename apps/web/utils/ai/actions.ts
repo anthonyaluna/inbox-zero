@@ -33,7 +33,19 @@ import {
 } from "@/utils/messaging/rule-notifications";
 import { isMessagingDraftActionType } from "@/utils/actions/draft-reply";
 import { checkHasAccess } from "@/utils/premium/server";
-import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-management";
+import {
+  createOrReconcileCoastlineDraft,
+  handlePreviousDraftDeletion,
+} from "@/utils/ai/choose-rule/draft-management";
+import {
+  createInboxZeroDraftProposalFromAction,
+  parseInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
+import { assertCoastlineDraftOnlyAction } from "@/utils/coastline/draft-only-policy";
+import {
+  buildReplyAllRecipients,
+  mergeAndDedupeRecipients,
+} from "@/utils/email/reply-all";
 
 const MODULE = "ai-actions";
 
@@ -67,6 +79,15 @@ export const runActionFunction = async (options: {
     id: action.id,
   });
   log.trace("Running action", () => filterNullProperties(action));
+
+  assertCoastlineDraftOnlyAction({
+    actionType: action.type,
+    providerName: options.client.name,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    providerCapabilities: {
+      canDraftEmail: typeof options.client.draftEmail === "function",
+    },
+  });
 
   const { type, ...args } = action;
   const opts = {
@@ -229,11 +250,15 @@ const draft: ActionFunction<{
     }
   }
 
-  const previousDraftHandling = await handlePreviousDraftDeletion({
-    client,
-    executedRule,
-    logger,
-  });
+  const isCoastlineMicrosoftDraft =
+    env.COASTLINE_DRAFT_PROPOSALS_ENABLED && client.name === "microsoft";
+  const previousDraftHandling = isCoastlineMicrosoftDraft
+    ? { shouldCreateDraft: true as const }
+    : await handlePreviousDraftDeletion({
+        client,
+        executedRule,
+        logger,
+      });
 
   if (!previousDraftHandling.shouldCreateDraft) {
     logger.info("Skipping draft creation", {
@@ -262,27 +287,99 @@ const draft: ActionFunction<{
     attachments,
   };
 
-  const result = await client.draftEmail(
-    {
-      id: email.id,
+  let draftProposal:
+    | ReturnType<typeof createInboxZeroDraftProposalFromAction>
+    | undefined;
+
+  if (isCoastlineMicrosoftDraft && !draftArgs.content.trim()) {
+    throw Object.assign(
+      new Error(
+        "Coastline Microsoft drafts require non-empty proposal content",
+      ),
+      { code: "COASTLINE_DRAFT_PROPOSAL_REQUIRED" },
+    );
+  }
+
+  if (isCoastlineMicrosoftDraft) {
+    const replyAllRecipients = buildReplyAllRecipients(
+      email.headers,
+      draftArgs.to,
+      emailAccount.email,
+    );
+    draftProposal = createInboxZeroDraftProposalFromAction({
+      accountId: emailAccount.id,
       threadId: email.threadId,
-      headers: email.headers,
-      internalDate: email.internalDate,
-      snippet: "",
-      historyId: "",
-      inline: [],
-      subject: email.headers.subject,
-      date: email.headers.date,
-      labelIds: [],
-      textPlain: email.textPlain,
-      textHtml: email.textHtml,
-      attachments: email.attachments,
-    },
-    draftArgs,
-    emailAccount.email,
-  );
+      sourceMessageId: email.id,
+      to: normalizeProposalRecipients(replyAllRecipients.to),
+      cc: normalizeProposalRecipients(
+        mergeAndDedupeRecipients(replyAllRecipients.cc, draftArgs.cc),
+      ),
+      bcc: normalizeProposalRecipients(splitRecipientList(draftArgs.bcc ?? "")),
+      subject: draftArgs.subject ?? email.headers.subject,
+      bodyText: draftArgs.content,
+      model: "inbox-zero-action",
+      confidence: "medium",
+    });
+
+    parseInboxZeroDraftProposal(draftProposal);
+    logger.info("Validated Coastline draft-only proposal", {
+      accountId: draftProposal.account_id,
+      threadId: draftProposal.thread_id,
+      sourceMessageId: draftProposal.source_message_id,
+      idempotencyKey: draftProposal.idempotency_key,
+    });
+  }
+
+  const createDraft = (coastlineDraftMarker?: string) =>
+    client.draftEmail(
+      {
+        id: email.id,
+        threadId: email.threadId,
+        headers: email.headers,
+        internalDate: email.internalDate,
+        snippet: "",
+        historyId: "",
+        inline: [],
+        subject: email.headers.subject,
+        date: email.headers.date,
+        labelIds: [],
+        textPlain: email.textPlain,
+        textHtml: email.textHtml,
+        attachments: email.attachments,
+      },
+      draftArgs,
+      emailAccount.email,
+      undefined,
+      coastlineDraftMarker,
+    );
+
+  if (draftProposal) {
+    const result = await createOrReconcileCoastlineDraft({
+      actionId: args.id,
+      proposal: draftProposal,
+      client,
+      createDraft,
+      logger,
+    });
+    return {
+      draftId: result.draftId,
+      draftProposal,
+      draftReceipt: result.receipt,
+    };
+  }
+
+  const result = await createDraft();
+
   return { draftId: result.draftId };
 };
+
+function normalizeProposalRecipients(value: string | string[] | undefined) {
+  const entries = Array.isArray(value) ? value : value ? [value] : [];
+  return entries
+    .flatMap((entry) => splitRecipientList(entry))
+    .map((entry) => extractEmailAddress(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
 
 const draft_messaging_channel: ActionFunction<{
   messagingChannelId?: string | null;

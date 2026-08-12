@@ -1,4 +1,5 @@
 import prisma from "@/utils/prisma";
+import { env } from "@/env";
 import { ActionType, DraftEmailStatus } from "@/generated/prisma/enums";
 import type { ExecutedRule } from "@/generated/prisma/client";
 import type { Logger } from "@/utils/logger";
@@ -6,6 +7,27 @@ import type { EmailProvider } from "@/utils/email/types";
 import { convertEmailHtmlToText } from "@/utils/mail";
 import type { ParsedMessage } from "@/utils/types";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
+import { stripQuotedContent as stripQuotedEmailContent } from "@/utils/email/strip-quoted-content";
+import {
+  createInboxZeroDraftReceipt,
+  parseInboxZeroDraftReceipt,
+  type InboxZeroDraftProposal,
+  type InboxZeroDraftReceipt,
+} from "@/utils/coastline/draft-proposal";
+import {
+  markRecoveryRequired,
+  recordCoastlineDraftCreation,
+  reconcileCoastlineDraft,
+  reserveOrReconcileCoastlineDraft,
+  buildCoastlineDraftMarker,
+} from "@/utils/coastline/draft-reservation";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
+
+const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
+const RECEIPT_PERSISTENCE_ERROR_CODE =
+  "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED";
+const DRAFT_RECOVERY_ERROR_CODE = "COASTLINE_DRAFT_RECOVERY_REQUIRED";
+const DRAFT_READBACK_ERROR_CODE = "COASTLINE_DRAFT_READBACK_FAILED";
 
 export type PreviousDraftHandlingResult =
   | {
@@ -105,6 +127,14 @@ export async function handlePreviousDraftDeletion({
     ) {
       logger.info("Draft content matches, deleting draft.");
 
+      // Draft replacement can reach this helper with a raw provider instance,
+      // below the provider proxy boundary. Guard the deletion at its direct sink.
+      assertCoastlineMutationAllowed({
+        surface: "draft-management/previous-draft-deletion",
+        mutation: "DELETE_DRAFT",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
+
       await Promise.all([
         client.deleteDraft(previousDraftAction.draftId),
         prisma.executedAction.update({
@@ -141,17 +171,23 @@ export async function handlePreviousDraftDeletion({
 export async function updateExecutedActionWithDraftId({
   actionId,
   draftId,
+  receipt,
   logger,
 }: {
   actionId: string;
   draftId: string;
+  receipt?: InboxZeroDraftReceipt;
   logger: Logger;
 }) {
   try {
-    await prisma.executedAction.update({
-      where: { id: actionId },
-      data: { draftId, draftStatus: DraftEmailStatus.PENDING },
-    });
+    if (receipt) {
+      await persistDraftReceipt({ actionId, draftId, receipt });
+    } else {
+      await prisma.executedAction.update({
+        where: { id: actionId },
+        data: { draftId, draftStatus: DraftEmailStatus.PENDING },
+      });
+    }
     logger.info("Updated executed action with draft ID", { actionId, draftId });
   } catch (error) {
     logger.error("Failed to update executed action with draft ID", {
@@ -159,7 +195,281 @@ export async function updateExecutedActionWithDraftId({
       draftId,
       error,
     });
+    throw createReceiptPersistenceError(error);
   }
+}
+
+export async function createOrReconcileCoastlineDraft({
+  actionId,
+  proposal,
+  client,
+  createDraft,
+  logger,
+}: {
+  actionId: string;
+  proposal: InboxZeroDraftProposal;
+  client: EmailProvider;
+  createDraft: (marker?: string) => Promise<{ draftId: string }>;
+  logger: Logger;
+}): Promise<{ draftId: string; receipt: InboxZeroDraftReceipt }> {
+  const reservation = await reserveOrReconcileCoastlineDraft({
+    actionId,
+    proposal,
+    client,
+  });
+  if (reservation.state === "recovery_required") {
+    throw createDraftRecoveryError(
+      "Draft idempotency reservation is awaiting recovery by its creator",
+    );
+  }
+  let draftId = reservation.draftId;
+
+  if (!draftId) {
+    const createdDraft = await createDraft(buildCoastlineDraftMarker(proposal));
+    draftId = createdDraft.draftId;
+    try {
+      await recordCoastlineDraftCreation({
+        reservationId: reservation.reservationId,
+        draftId,
+        creationClaimId: actionId,
+      });
+    } catch (error) {
+      await markRecoveryRequired(
+        reservation.reservationId,
+        "COASTLINE_DRAFT_RECOVERY_REQUIRED",
+      );
+      throw createDraftRecoveryError(
+        error instanceof Error
+          ? error.message
+          : "Created Coastline draft could not be reserved for recovery",
+      );
+    }
+    const unverifiedReceipt = createInboxZeroDraftReceipt({
+      proposal,
+      draftId,
+    });
+    try {
+      await updateExecutedActionWithDraftId({
+        actionId,
+        draftId,
+        receipt: unverifiedReceipt,
+        logger,
+      });
+    } catch (error) {
+      await persistRecoveryReceiptBestEffort({
+        actionId,
+        draftId,
+        receipt: { ...unverifiedReceipt, terminalState: "failed" },
+        logger,
+      });
+      throw error;
+    }
+  }
+
+  try {
+    await assertExactDraftReadback({ client, draftId, proposal });
+    await reconcileCoastlineDraft({
+      reservationId: reservation.reservationId,
+      draftId,
+      proposal,
+      client,
+    });
+  } catch (error) {
+    await markRecoveryRequired(
+      reservation.reservationId,
+      DRAFT_READBACK_ERROR_CODE,
+    );
+    const failedReceipt = {
+      ...createInboxZeroDraftReceipt({ proposal, draftId }),
+      terminalState: "failed" as const,
+    };
+    await persistRecoveryReceiptBestEffort({
+      actionId,
+      draftId,
+      receipt: failedReceipt,
+      logger,
+    });
+    throw Object.assign(
+      new Error("Coastline draft independent readback did not match"),
+      { code: DRAFT_READBACK_ERROR_CODE, cause: error },
+    );
+  }
+
+  const receipt = createInboxZeroDraftReceipt({
+    proposal,
+    draftId,
+    readBackAt: new Date(),
+  });
+  await updateExecutedActionWithDraftId({
+    actionId,
+    draftId,
+    receipt,
+    logger,
+  });
+  await assertPersistedVerifiedReceipt({ actionId, receipt });
+
+  return { draftId, receipt };
+}
+
+async function assertExactDraftReadback({
+  client,
+  draftId,
+  proposal,
+}: {
+  client: EmailProvider;
+  draftId: string;
+  proposal: InboxZeroDraftProposal;
+}) {
+  const draft = await client.getDraft(draftId);
+  if (!draft || draft.id !== draftId || draft.threadId !== proposal.thread_id) {
+    throw new Error("Draft identity did not match the reserved proposal");
+  }
+  if (
+    draft.subject.trim() !== proposal.subject.trim() ||
+    stripQuotedContent(extractDraftPlainText(draft)) !==
+      proposal.body_text.trim()
+  ) {
+    throw new Error("Draft content did not match the reserved proposal");
+  }
+
+  assertExactRecipientBuckets({
+    actual: draft.headers,
+    expected: proposal,
+  });
+}
+
+async function assertPersistedVerifiedReceipt({
+  actionId,
+  receipt,
+}: {
+  actionId: string;
+  receipt: InboxZeroDraftReceipt;
+}) {
+  const action = await prisma.executedAction.findUnique({
+    where: { id: actionId },
+    select: { draftId: true, draftContextMetadata: true },
+  });
+  const persisted = parseReceipt(
+    toMetadataObject(action?.draftContextMetadata).coastlineDraft,
+  );
+  if (
+    action?.draftId !== receipt.draftId ||
+    !persisted ||
+    persisted.terminalState !== "created_verified" ||
+    persisted.idempotencyKey !== receipt.idempotencyKey ||
+    persisted.draftId !== receipt.draftId ||
+    !persisted.readBackAt
+  ) {
+    throw createReceiptPersistenceError(
+      new Error("Persisted Coastline draft receipt readback did not match"),
+    );
+  }
+}
+
+async function persistRecoveryReceiptBestEffort({
+  actionId,
+  draftId,
+  receipt,
+  logger,
+}: {
+  actionId: string;
+  draftId: string;
+  receipt: InboxZeroDraftReceipt;
+  logger: Logger;
+}) {
+  try {
+    await updateExecutedActionWithDraftId({
+      actionId,
+      draftId,
+      receipt,
+      logger,
+    });
+  } catch (error) {
+    logger.error("Failed to persist Coastline draft recovery state", {
+      actionId,
+      draftId,
+      error,
+    });
+  }
+}
+
+function parseReceipt(value: unknown): InboxZeroDraftReceipt | null {
+  const result = (() => {
+    try {
+      return parseInboxZeroDraftReceipt(value);
+    } catch {
+      return null;
+    }
+  })();
+  return result;
+}
+
+function createDraftRecoveryError(message: string) {
+  return Object.assign(new Error(message), { code: DRAFT_RECOVERY_ERROR_CODE });
+}
+
+async function persistDraftReceipt({
+  actionId,
+  draftId,
+  receipt,
+}: {
+  actionId: string;
+  draftId: string;
+  receipt: InboxZeroDraftReceipt;
+}) {
+  for (let attempt = 0; attempt < MAX_RECEIPT_PERSISTENCE_ATTEMPTS; attempt++) {
+    const existingAction = await prisma.executedAction.findUnique({
+      where: { id: actionId },
+      select: { draftContextMetadata: true, updatedAt: true },
+    });
+    if (!existingAction) {
+      throw new Error("Executed action is unavailable for receipt persistence");
+    }
+
+    // The version guard makes a competing metadata write retry against fresh data.
+    const result = await prisma.executedAction.updateMany({
+      where: { id: actionId, updatedAt: existingAction.updatedAt },
+      data: {
+        draftId,
+        draftStatus: DraftEmailStatus.PENDING,
+        updatedAt: new Date(),
+        draftContextMetadata: {
+          ...toMetadataObject(existingAction.draftContextMetadata),
+          coastlineDraft: receipt,
+        },
+        ...(receipt.terminalState === "failed"
+          ? {
+              executionError: {
+                code: "COASTLINE_DRAFT_RECEIPT_FAILED",
+                message: "Coastline draft receipt recorded a failed state",
+                stack: null,
+                statusCode: null,
+                requestId: null,
+              },
+            }
+          : {}),
+      },
+    });
+    if (result.count === 1) return;
+  }
+
+  throw new Error("Draft receipt metadata changed during persistence");
+}
+
+function createReceiptPersistenceError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : "Coastline draft receipt persistence failed";
+  return Object.assign(new Error(message), {
+    code: RECEIPT_PERSISTENCE_ERROR_CODE,
+  });
+}
+
+function toMetadataObject(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -180,24 +490,8 @@ export function extractDraftPlainText(draft: ParsedMessage): string {
 /**
  * Removes quoted content from email text.
  */
-export function stripQuotedContent(text: string): string {
-  const quoteHeaderPatterns = [
-    /\n\nOn .* wrote:/,
-    /\n\n----+ Original Message ----+/,
-    /\n\n>+ On .*/,
-    /\n\nFrom: .*/,
-  ];
-
-  let result = text;
-  for (const pattern of quoteHeaderPatterns) {
-    const parts = result.split(pattern);
-    if (parts.length > 1) {
-      result = parts[0];
-      break;
-    }
-  }
-
-  return result.trim();
+export function stripQuotedContent(text: string) {
+  return stripQuotedEmailContent(text);
 }
 
 /**
@@ -261,4 +555,45 @@ function extractDraftComparisonText(draft: ParsedMessage): {
     text: extractDraftPlainText(draft),
     source: "textPlain",
   };
+}
+
+type RecipientBucketsInput = {
+  to?: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
+};
+
+export function normalizeRecipientBuckets(input: RecipientBucketsInput) {
+  return {
+    to: normalizeRecipientBucket(input.to),
+    cc: normalizeRecipientBucket(input.cc),
+    bcc: normalizeRecipientBucket(input.bcc),
+  };
+}
+
+function assertExactRecipientBuckets({
+  actual,
+  expected,
+}: {
+  actual: RecipientBucketsInput;
+  expected: RecipientBucketsInput;
+}) {
+  const normalizedActual = normalizeRecipientBuckets(actual);
+  const normalizedExpected = normalizeRecipientBuckets(expected);
+  if (JSON.stringify(normalizedActual) !== JSON.stringify(normalizedExpected)) {
+    throw new Error("Draft recipient buckets did not match the reserved proposal");
+  }
+}
+
+function normalizeRecipientBucket(value: string | string[] | undefined) {
+  const values = Array.isArray(value) ? value : [value ?? ""];
+  return [...new Set(
+    values
+      .flatMap((entry) => entry.split(/[;,]/))
+      .map((entry) => {
+        const match = entry.match(/<([^>]+)>/);
+        return (match?.[1] ?? entry).trim().toLowerCase();
+      })
+      .filter(Boolean),
+  )].sort();
 }

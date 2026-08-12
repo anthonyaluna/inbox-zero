@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withEmailProvider } from "@/utils/middleware";
 import { isThreadNotFoundError } from "@/utils/email/thread-not-found";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const paramsSchema = z.object({ id: z.string() });
 
 /**
  * Moves a thread to trash / deleted items. This is not a permanent delete.
  */
-export const POST = withEmailProvider(
+const trashThreadPost = withEmailProvider(
   "threads/trash",
   async (request, context) => {
     const params = await context.params;
@@ -35,4 +36,9 @@ export const POST = withEmailProvider(
 
     return NextResponse.json({ success: true });
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "threads/trash", mutation: "TRASH_THREAD" },
+  trashThreadPost,
 );

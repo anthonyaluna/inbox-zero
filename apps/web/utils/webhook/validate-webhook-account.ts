@@ -8,6 +8,7 @@ import {
 } from "@/utils/premium";
 import { unwatchEmails } from "@/utils/email/watch-manager";
 import { createEmailProvider } from "@/utils/email/provider";
+import { withCoastlineProviderMutationGuard } from "@/utils/coastline/provider-mutation-guard";
 import {
   getGmailClientForEmail,
   getOutlookClientForEmail,
@@ -322,12 +323,16 @@ async function createEmailProviderForWebhookCleanup({
 }) {
   if (isGoogleProvider(provider)) {
     const client = await getGmailClientForEmail({ emailAccountId, logger });
-    return new GmailProvider(client, logger, emailAccountId);
+    return withCoastlineProviderMutationGuard(
+      new GmailProvider(client, logger, emailAccountId),
+    );
   }
 
   if (isMicrosoftProvider(provider)) {
     const client = await getOutlookClientForEmail({ emailAccountId, logger });
-    return new OutlookProvider(client, logger);
+    return withCoastlineProviderMutationGuard(
+      new OutlookProvider(client, logger),
+    );
   }
 
   return null;

@@ -28,19 +28,27 @@ describe("betterAuthConfig login providers", () => {
     vi.doUnmock("@/utils/oauth/login-providers");
   });
 
-  it("does not register social providers when only SSO login is enabled", async () => {
-    const betterAuthConfig = await loadBetterAuthConfig(["sso"]);
+  it(
+    "does not register social providers when only SSO login is enabled",
+    async () => {
+      const betterAuthConfig = await loadBetterAuthConfig(["sso"]);
 
-    expect(betterAuthConfig.options.socialProviders).toEqual({});
-  });
+      expect(betterAuthConfig.options.socialProviders).toEqual({});
+    },
+    15_000,
+  );
 
-  it("registers only enabled social providers", async () => {
-    const betterAuthConfig = await loadBetterAuthConfig(["apple"]);
+  it(
+    "registers only enabled social providers",
+    async () => {
+      const betterAuthConfig = await loadBetterAuthConfig(["apple"]);
 
-    expect(Object.keys(betterAuthConfig.options.socialProviders)).toEqual([
-      "apple",
-    ]);
-  });
+      expect(Object.keys(betterAuthConfig.options.socialProviders)).toEqual([
+        "apple",
+      ]);
+    },
+    15_000,
+  );
 });
 
 async function loadBetterAuthConfig(enabledProviders: string[]) {

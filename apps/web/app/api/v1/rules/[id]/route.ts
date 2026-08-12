@@ -9,6 +9,7 @@ import {
   ruleRequestBodySchema,
 } from "@/app/api/v1/rules/validation";
 import { assertCanUseDigestsIfNeeded } from "@/utils/premium/server";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export const GET = withAccountApiKey(
   "v1/rules/detail",
@@ -30,7 +31,7 @@ export const GET = withAccountApiKey(
   },
 );
 
-export const PUT = withAccountApiKey(
+const updateRulePut = withAccountApiKey(
   "v1/rules/update",
   ["RULES_WRITE"],
   async (request, { params }) => {
@@ -72,7 +73,12 @@ export const PUT = withAccountApiKey(
   },
 );
 
-export const DELETE = withAccountApiKey(
+export const PUT = withCoastlineMutationGuard(
+  { surface: "v1/rules/update", mutation: "UPDATE_RULE" },
+  updateRulePut,
+);
+
+const deleteRuleDelete = withAccountApiKey(
   "v1/rules/delete",
   ["RULES_WRITE"],
   async (request, { params }) => {
@@ -96,4 +102,9 @@ export const DELETE = withAccountApiKey(
 
     return new Response(null, { status: 204 });
   },
+);
+
+export const DELETE = withCoastlineMutationGuard(
+  { surface: "v1/rules/delete", mutation: "DELETE_RULE" },
+  deleteRuleDelete,
 );

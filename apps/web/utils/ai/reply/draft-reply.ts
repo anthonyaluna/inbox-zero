@@ -20,6 +20,11 @@ import {
 const logger = createScopedLogger("DraftReply");
 const DRAFT_OUTPUT_INSTRUCTION =
   "Return plain text only. Do not use HTML tags. If a clickable link is necessary, use markdown links in the format [Label](https://example.com/path) or [Label](mailto:name@example.com).";
+const HIGH_RISK_ESCALATION_MARKER = "[Escalate: Hold for Anthony]";
+const HIGH_RISK_MATTER_PATTERN =
+  /\b(?:insurance|accounting|accounts?\s+payable|ap|invoices?|payments?|leases?|legal|compliance|fair\s+housing|life\s+safety|habitability|pr\s+risk|public\s+relations|key\s+clients?)\b/i;
+const CURRENCY_AMOUNT_PATTERN =
+  /(?:\$|\busd\s*)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{2})?)/gi;
 
 const systemPrompt = `You are an expert assistant that drafts email replies.
 
@@ -385,10 +390,41 @@ export async function aiDraftReplyWithConfidence({
   }
 
   return {
-    reply: normalizeDraftReplyFormatting(result.object.reply),
+    reply: addHighRiskEscalationMarker({
+      reply: normalizeDraftReplyFormatting(result.object.reply),
+      latestMessage: messages.at(-1),
+    }),
     confidence: mapLlmDraftConfidence(result.object.confidence),
     attribution: attributionTracker.attribution,
   };
+}
+
+export function addHighRiskEscalationMarker({
+  reply,
+  latestMessage,
+}: {
+  reply: string;
+  latestMessage: (EmailForLLM & { to: string }) | undefined;
+}) {
+  if (
+    !latestMessage ||
+    !isHighRiskIncomingMatter(latestMessage) ||
+    reply.includes(HIGH_RISK_ESCALATION_MARKER)
+  ) {
+    return reply;
+  }
+
+  return `${reply}\n\n${HIGH_RISK_ESCALATION_MARKER}`;
+}
+
+function isHighRiskIncomingMatter(message: EmailForLLM & { to: string }) {
+  const matter = `${message.subject}\n${message.content}`;
+  return (
+    HIGH_RISK_MATTER_PATTERN.test(matter) ||
+    [...matter.matchAll(CURRENCY_AMOUNT_PATTERN)].some(
+      ([, amount]) => Number(amount.replaceAll(",", "")) > 5000,
+    )
+  );
 }
 
 export async function aiDraftReply({

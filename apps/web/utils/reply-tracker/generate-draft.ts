@@ -2,7 +2,10 @@ import type { ParsedMessage } from "@/utils/types";
 import { internalDateToDate, sortByInternalDate } from "@/utils/date";
 import { getEmailForLLM } from "@/utils/get-email-from-message";
 import { extractEmailAddress, extractEmailAddresses } from "@/utils/email";
-import { aiDraftReplyWithConfidence } from "@/utils/ai/reply/draft-reply";
+import {
+  addHighRiskEscalationMarker,
+  aiDraftReplyWithConfidence,
+} from "@/utils/ai/reply/draft-reply";
 import { getReplyWithConfidence, saveReply } from "@/utils/redis/reply";
 import { getWritingStyle } from "@/utils/user/get";
 import type { EmailAccountWithAI } from "@/utils/llms/types";
@@ -197,7 +200,10 @@ async function generateDraftContent(
 
     if (meetsThreshold) {
       return {
-        draft: cachedReply.reply,
+        draft: addHighRiskEscalationMarker({
+          reply: cachedReply.reply,
+          latestMessage: getEmailForLLM(lastMessage),
+        }),
         confidence: cachedReply.confidence,
         attribution: cachedReply.attribution,
         draftContextMetadata: cachedReply.draftContextMetadata
@@ -427,7 +433,11 @@ async function generateDraftContent(
   }
 
   // 3. Draft reply
-  const { reply, confidence, attribution } = await aiDraftReplyWithConfidence({
+  const {
+    reply: generatedReply,
+    confidence,
+    attribution,
+  } = await aiDraftReplyWithConfidence({
     messages,
     emailAccount: { ...emailAccount, bookingLinks: activeBookingLinks },
     knowledgeBaseContent: knowledgeResult?.relevantContent || null,
@@ -442,6 +452,10 @@ async function generateDraftContent(
     mcpContext: mcpResult?.response || null,
     meetingContext,
     attachmentContext: attachmentSelection.attachmentContext,
+  });
+  const reply = addHighRiskEscalationMarker({
+    reply: generatedReply,
+    latestMessage: messages.at(-1),
   });
 
   const meetsThreshold = meetsDraftReplyConfidenceRequirement({

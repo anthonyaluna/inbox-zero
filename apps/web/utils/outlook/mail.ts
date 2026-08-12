@@ -277,6 +277,7 @@ export async function draftEmail(
   },
   userEmails: string | string[],
   logger: Logger,
+  coastlineDraftMarker?: string,
 ) {
   const { html } = createOutlookReplyContent({
     textContent: args.content,
@@ -350,7 +351,21 @@ export async function draftEmail(
       client
         .getClient()
         .api(`/me/messages/${originalEmail.id}/createReplyAll`)
-        .post({}),
+        .post(
+          coastlineDraftMarker
+            ? {
+                message: {
+                  body: { contentType: "html", content: html },
+                  singleValueExtendedProperties: [
+                    {
+                      id: "String {00020329-0000-0000-C000-000000000046} Name CoastlineDraftMarker",
+                      value: coastlineDraftMarker,
+                    },
+                  ],
+                },
+              }
+            : {},
+        ),
     logger,
   );
 
@@ -374,6 +389,16 @@ export async function draftEmail(
         toRecipients: [toRecipient],
         ccRecipients,
         bccRecipients,
+        ...(coastlineDraftMarker
+          ? {
+              singleValueExtendedProperties: [
+                {
+                  id: "String {00020329-0000-0000-C000-000000000046} Name CoastlineDraftMarker",
+                  value: coastlineDraftMarker,
+                },
+              ],
+            }
+          : {}),
       }),
     logger,
   );

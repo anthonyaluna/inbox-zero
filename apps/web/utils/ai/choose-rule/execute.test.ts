@@ -7,6 +7,11 @@ import prisma from "@/utils/prisma";
 import type { EmailProvider } from "@/utils/email/types";
 import type { ParsedMessage } from "@/utils/types";
 import { createTestLogger } from "@/__tests__/helpers";
+import { updateExecutedActionWithDraftId } from "@/utils/ai/choose-rule/draft-management";
+import {
+  buildDraftIdempotencyKey,
+  createInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
 
 const { envMock } = vi.hoisted(() => ({
   envMock: {
@@ -14,12 +19,30 @@ const { envMock } = vi.hoisted(() => ({
   },
 }));
 
+const { mockClassifyCalendarContext, mockDispatchCalendarProposal } =
+  vi.hoisted(() => ({
+    mockClassifyCalendarContext: vi.fn(),
+    mockDispatchCalendarProposal: vi.fn(),
+  }));
+
 vi.mock("@/env", () => ({
   env: envMock,
 }));
 
 vi.mock("@/utils/ai/actions", () => ({
   runActionFunction: vi.fn(),
+}));
+
+vi.mock("@/utils/ai/choose-rule/draft-management", () => ({
+  updateExecutedActionWithDraftId: vi.fn(),
+}));
+
+vi.mock("@/utils/coastline/calendar-context-broker", () => ({
+  classifyCalendarContext: mockClassifyCalendarContext,
+}));
+
+vi.mock("@/utils/coastline/action-router", () => ({
+  dispatchClearCoastlineCalendarProposal: mockDispatchCalendarProposal,
 }));
 
 vi.mock("@/utils/prisma", () => ({
@@ -73,12 +96,21 @@ describe("executeAct", () => {
   };
 
   const mockRunActionFunction = runActionFunction as Mock;
+  const mockUpdateExecutedActionWithDraftId =
+    updateExecutedActionWithDraftId as Mock;
   const mockExecutedActionUpdate = prisma.executedAction.update as Mock;
   const mockExecutedRuleUpdate = prisma.executedRule.update as Mock;
 
   beforeEach(() => {
     vi.clearAllMocks();
     envMock.WHITELIST_FROM = undefined;
+    mockClassifyCalendarContext.mockReturnValue({
+      status: "not_scheduling",
+      reason: "no_scheduling_intent",
+    });
+    mockDispatchCalendarProposal.mockResolvedValue({
+      receipt: { eventId: "event-1" },
+    });
     mockExecutedActionUpdate.mockResolvedValue({});
     mockExecutedRuleUpdate.mockResolvedValue({});
   });
@@ -139,6 +171,41 @@ describe("executeAct", () => {
       where: { id: "executed-rule-1" },
       data: { status: ExecutedRuleStatus.APPLIED },
     });
+  });
+
+  it("dispatches a clear calendar proposal once before mailbox actions", async () => {
+    const proposal = {
+      accountId: "email-account-1",
+      threadId: "thread-id-1",
+      sourceMessageId: "message-id-1",
+      idempotencyKey:
+        "inbox-zero/calendar/email-account-1/thread-id-1/message-id-1",
+    };
+    mockClassifyCalendarContext.mockReturnValue({
+      status: "clear",
+      reason: "explicit_scheduling_request",
+      proposal,
+    });
+    const microsoftClient = { name: "microsoft" } as EmailProvider;
+    mockRunActionFunction.mockResolvedValueOnce({ success: true });
+
+    await executeAct({
+      client: microsoftClient,
+      executedRule: {
+        ...baseExecutedRule,
+        actionItems: [{ id: "action-1", type: ActionType.LABEL }],
+      } as any,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockDispatchCalendarProposal).toHaveBeenCalledTimes(1);
+    expect(mockDispatchCalendarProposal).toHaveBeenCalledWith({
+      proposal,
+      logger: expect.anything(),
+    });
+    expect(mockRunActionFunction).toHaveBeenCalledTimes(1);
   });
 
   it("records actions skipped by the executor without failing the rule", async () => {
@@ -325,6 +392,193 @@ describe("executeAct", () => {
     expect(mockExecutedRuleUpdate).toHaveBeenCalledWith({
       where: { id: "executed-rule-1" },
       data: { status: ExecutedRuleStatus.APPLIED },
+    });
+  });
+
+  it("accepts a Coastline action only after a persisted verified receipt", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "thread-id-1",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/thread-id-1/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: "2026-08-11T12:00:01.000Z",
+        terminalState: "created_verified",
+      },
+    });
+
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+    } as any;
+
+    await executeAct({
+      client: mockClient,
+      executedRule,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockUpdateExecutedActionWithDraftId).not.toHaveBeenCalled();
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: expect.objectContaining({ executionStatus: "SUCCEEDED" }),
+    });
+  });
+
+  it("marks the action failed when Coastline readback is not verified", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "thread-id-1",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/thread-id-1/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: null,
+        terminalState: "created_unverified",
+      },
+    });
+
+    const executedRule = {
+      ...baseExecutedRule,
+      actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+    } as any;
+
+    await expect(
+      executeAct({
+        client: mockClient,
+        executedRule,
+        message,
+        emailAccount,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED",
+    });
+
+    expect(mockExecutedActionUpdate).toHaveBeenCalledTimes(1);
+    expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
+      where: { id: "action-1" },
+      data: {
+        executionStatus: "FAILED",
+        executedAt: expect.any(Date),
+        executionError: {
+          code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED",
+          message: "Coastline draft did not return a verified receipt",
+          stack: expect.stringContaining(
+            "Coastline draft did not return a verified receipt",
+          ),
+          statusCode: null,
+          requestId: null,
+        },
+      },
+    });
+    expect(mockExecutedRuleUpdate).toHaveBeenCalledWith({
+      where: { id: "executed-rule-1" },
+      data: { status: ExecutedRuleStatus.ERROR },
+    });
+  });
+
+  it("rejects a Coastline receipt when its proposal does not match the executing message", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "different-thread",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject",
+        body_text: "Body",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "different-thread",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "different-thread",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/different-thread/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: "2026-08-11T12:00:01.000Z",
+        terminalState: "created_verified",
+      },
+    });
+
+    await expect(
+      executeAct({
+        client: mockClient,
+        executedRule: {
+          ...baseExecutedRule,
+          actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+        } as any,
+        message,
+        emailAccount,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_PROPOSAL_CONTEXT_MISMATCH",
     });
   });
 

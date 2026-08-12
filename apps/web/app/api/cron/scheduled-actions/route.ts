@@ -12,6 +12,7 @@ import {
 import { markQStashActionAsExecuting } from "@/utils/scheduled-actions/scheduler";
 import { env } from "@/env";
 import type { Logger } from "@/utils/logger";
+import { createCoastlineCronAuthProbe } from "@/utils/coastline/cron-auth-probe";
 
 export const maxDuration = 300;
 
@@ -23,6 +24,29 @@ export const GET = withError("cron/scheduled-actions", async (request) => {
       new Error("Unauthorized request: api/cron/scheduled-actions"),
     );
     return new Response("Unauthorized", { status: 401 });
+  }
+
+  const coastlineProbe = request.nextUrl.searchParams.get("coastline_probe");
+  if (coastlineProbe) {
+    if (!env.COASTLINE_DRAFT_PROPOSALS_ENABLED || !env.CRON_SECRET) {
+      return NextResponse.json(
+        { error: "Coastline cron probe unavailable" },
+        { status: 503 },
+      );
+    }
+    try {
+      return NextResponse.json(
+        createCoastlineCronAuthProbe({
+          runNonce: coastlineProbe,
+          cronSecret: env.CRON_SECRET,
+        }),
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Coastline cron probe unavailable" },
+        { status: 400 },
+      );
+    }
   }
 
   if (env.QSTASH_TOKEN) {

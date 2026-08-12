@@ -11,9 +11,14 @@ import { DRAFT_PIPELINE_VERSION } from "@/utils/ai/reply/draft-attribution";
 import type { DraftContextMetadata } from "@/utils/ai/reply/draft-context-metadata";
 import { createTestLogger } from "@/__tests__/helpers";
 
-vi.mock("@/utils/ai/reply/draft-reply", () => ({
-  aiDraftReplyWithConfidence: vi.fn(),
-}));
+vi.mock("@/utils/ai/reply/draft-reply", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/utils/ai/reply/draft-reply")>();
+  return {
+    ...actual,
+    aiDraftReplyWithConfidence: vi.fn(),
+  };
+});
 
 vi.mock("@/utils/redis/reply", () => ({
   getReplyWithConfidence: vi.fn().mockResolvedValue(null),
@@ -359,6 +364,36 @@ describe("fetchMessagesAndGenerateDraft - AI content escaping", () => {
 
     // Normal text should be unchanged
     expect(result).toBe(normalAiOutput);
+  });
+
+  it("creates an otherwise eligible high-risk draft with a hold marker", async () => {
+    vi.mocked(aiDraftReplyWithConfidence).mockResolvedValue({
+      reply: "I received the invoice and will review the supporting documents.",
+      confidence: DraftReplyConfidence.HIGH_CONFIDENCE,
+      attribution: null,
+    });
+    vi.mocked(prisma.emailAccount.findUnique).mockResolvedValue(
+      createMockEmailAccountSettings(),
+    );
+
+    const result = await fetchMessagesAndGenerateDraft(
+      createMockEmailAccount(),
+      "thread-1",
+      createMockClient(),
+      {
+        ...createMockMessage(),
+        headers: {
+          ...createMockMessage().headers,
+          subject: "Invoice approval request",
+        },
+        textPlain: "Please approve the attached invoice for payment.",
+      },
+      logger,
+    );
+
+    expect(result).toBe(
+      "I received the invoice and will review the supporting documents.\n\n[Escalate: Hold for Anthony]",
+    );
   });
 
   it("preserves empty-string drafts", async () => {

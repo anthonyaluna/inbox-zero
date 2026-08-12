@@ -6,8 +6,18 @@ import { sendEmailBody } from "@/utils/gmail/mail";
 import { actionClient } from "@/utils/actions/safe-action";
 import { SafeError } from "@/utils/error";
 import { createEmailProvider } from "@/utils/email/provider";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 const isStatusOk = (status: number) => status >= 200 && status < 300;
+
+function assertMailboxMutation(mutation: string) {
+  assertCoastlineMutationAllowed({
+    surface: "server-action/mail",
+    mutation,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
+}
 
 export const archiveThreadAction = actionClient
   .metadata({ name: "archiveThread" })
@@ -19,6 +29,7 @@ export const archiveThreadAction = actionClient
       ctx: { emailAccountId, emailAccount, provider, logger },
       parsedInput: { threadId, labelId },
     }) => {
+      assertMailboxMutation("ARCHIVE_THREAD");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -46,6 +57,7 @@ export const trashThreadAction = actionClient
       ctx: { emailAccountId, emailAccount, provider, logger },
       parsedInput: { threadId },
     }) => {
+      assertMailboxMutation("TRASH_THREAD");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -69,6 +81,7 @@ export const markReadThreadAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { threadId, read },
     }) => {
+      assertMailboxMutation("MARK_READ_THREAD");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -100,6 +113,7 @@ export const createAutoArchiveFilterAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { from, gmailLabelId, labelName },
     }) => {
+      assertMailboxMutation("CREATE_AUTO_ARCHIVE_FILTER");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -122,6 +136,7 @@ export const createFilterAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { from, gmailLabelId },
     }) => {
+      assertMailboxMutation("CREATE_FILTER");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -152,6 +167,7 @@ export const deleteFilterAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { id },
     }) => {
+      assertMailboxMutation("DELETE_FILTER");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -180,6 +196,7 @@ export const createLabelAction = actionClient
       ctx: { emailAccountId, provider, logger },
       parsedInput: { name, description },
     }) => {
+      assertMailboxMutation("CREATE_LABEL");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -242,6 +259,7 @@ export const sendEmailAction = actionClient
   .inputSchema(sendEmailBody)
   .action(
     async ({ ctx: { emailAccountId, provider, logger }, parsedInput }) => {
+      assertMailboxMutation("SEND_EMAIL");
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,

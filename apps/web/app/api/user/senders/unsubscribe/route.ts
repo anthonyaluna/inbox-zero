@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withEmailAccount } from "@/utils/middleware";
 import { unsubscribeSenderBody } from "@/utils/actions/unsubscriber.validation";
 import { unsubscribeSenderAndMark } from "@/utils/senders/unsubscribe";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export type UnsubscribeSenderResponse = Awaited<
   ReturnType<typeof unsubscribeSenderAndMark>
@@ -15,7 +16,7 @@ export type UnsubscribeSenderResponse = Awaited<
  * Check `unsubscribe.success` in the response: when it is false the sender was
  * left unchanged and the caller should fall back to opening `unsubscribeLink`.
  */
-export const POST = withEmailAccount(
+const unsubscribePost = withEmailAccount(
   "user/senders/unsubscribe",
   async (request) => {
     const { senderEmail, unsubscribeLink, listUnsubscribeHeader } =
@@ -31,4 +32,9 @@ export const POST = withEmailAccount(
 
     return NextResponse.json(result satisfies UnsubscribeSenderResponse);
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "user/senders/unsubscribe", mutation: "UNSUBSCRIBE" },
+  unsubscribePost,
 );

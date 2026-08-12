@@ -15,6 +15,10 @@ on:
       - "turbo.json"
       - "tsconfig.json"
       - "konsistent.json"
+      - "docker-compose.yml"
+      - "docker-compose.dev.yml"
+      - "scripts/Invoke-CoastlineInboxZeroPreflight.ps1"
+      - "scripts/Verify-CoastlineInboxZeroStaging.ps1"
       - ".github/workflows/build-check.yml"
   pull_request:
     branches: [main]
@@ -27,6 +31,10 @@ on:
       - "turbo.json"
       - "tsconfig.json"
       - "konsistent.json"
+      - "docker-compose.yml"
+      - "docker-compose.dev.yml"
+      - "scripts/Invoke-CoastlineInboxZeroPreflight.ps1"
+      - "scripts/Verify-CoastlineInboxZeroStaging.ps1"
       - ".github/workflows/build-check.yml"
 
 concurrency:
@@ -90,3 +98,6 @@ jobs:
 
       - name: Build app
         run: pnpm turbo run build:ci --filter=./apps/web
+
+      - name: Check working-tree patch
+        run: git diff --check

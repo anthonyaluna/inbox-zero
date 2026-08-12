@@ -88,6 +88,17 @@ const parsedEnv = createEnv({
     MICROSOFT_CLIENT_ID: z.string().optional(),
     MICROSOFT_CLIENT_SECRET: z.string().optional(),
     MICROSOFT_TENANT_ID: z.string().optional().default("common"),
+    // Local Coastline integration only; validates draft proposals after Microsoft draft creation.
+    COASTLINE_DRAFT_PROPOSALS_ENABLED: booleanString.optional().default(false),
+    COASTLINE_STAGING_QUEUE_NAME: z.string().min(1).optional(),
+    COASTLINE_STAGING_ARTIFACT_SHA: z
+      .string()
+      .regex(/^[a-f0-9]{40}$/)
+      .optional(),
+    COASTLINE_DEPLOYED_ARTIFACT_SHA: z
+      .string()
+      .regex(/^[a-f0-9]{40}$/)
+      .optional(),
     APPLE_CLIENT_ID: z.string().optional(),
     APPLE_TEAM_ID: z.string().optional(),
     APPLE_KEY_ID: z.string().optional(),

@@ -729,6 +729,7 @@ model ExecutedAction {
   draftModelName       String?
   draftPipelineVersion Int?
   draftContextMetadata Json?
+  coastlineDraftReservation CoastlineDraftReservation?
   draftSendLog         DraftSendLog? // Exists when an outbound reply was compared against this draft
   digestItems          DigestItem[] // Relation to digest items created by this action
   scheduledAction      ScheduledAction? // Reverse relation for delayed actions
@@ -736,6 +737,60 @@ model ExecutedAction {
   @@index([executedRuleId])
   @@index([executionStatus, createdAt])
   @@index([messagingChannelId, createdAt])
+}
+
+enum CoastlineDraftReservationState {
+  reserved
+  created_unverified
+  created_verified
+  recovery_required
+}
+
+enum CoastlineCalendarInvitationReservationState {
+  reserved
+  created_verified
+  recovery_required
+}
+
+model CoastlineCalendarInvitationReservation {
+  id                   String                                     @id @default(cuid())
+  createdAt            DateTime                                   @default(now())
+  updatedAt            DateTime                                   @updatedAt
+  accountId            String
+  idempotencyKey       String
+  threadId             String
+  sourceMessageId      String
+  proposalFingerprint  String
+  providerEventId      String?
+  providerCalendarId   String?
+  providerConnectionId String?
+  terminalState        CoastlineCalendarInvitationReservationState @default(reserved)
+  recoverableErrorCode String?
+
+  @@unique([accountId, idempotencyKey])
+  @@index([providerEventId])
+  @@index([terminalState])
+}
+
+model CoastlineDraftReservation {
+  id                   String                         @id @default(cuid())
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
+  accountId            String
+  idempotencyKey       String
+  threadId             String
+  sourceMessageId      String
+  proposalFingerprint  String
+  executedActionId     String?                        @unique
+  executedAction       ExecutedAction?                @relation(fields: [executedActionId], references: [id], onDelete: SetNull)
+  creationClaimId      String?
+  draftId              String?
+  terminalState        CoastlineDraftReservationState @default(reserved)
+  recoverableErrorCode String?
+
+  @@unique([accountId, idempotencyKey])
+  @@index([draftId])
+  @@index([terminalState])
 }
 
 model ScheduledAction {

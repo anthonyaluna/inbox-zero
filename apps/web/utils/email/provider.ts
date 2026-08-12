@@ -10,6 +10,7 @@ import { toRateLimitProvider } from "@/utils/email/rate-limit-mode-error";
 import { recordEmailAccountProviderIssue } from "@/utils/email/provider-health";
 import type { Logger } from "@/utils/logger";
 import { flushLoggerSafely } from "@/utils/logger-flush";
+import { withCoastlineProviderMutationGuard } from "@/utils/coastline/provider-mutation-guard";
 
 export async function createEmailProvider({
   emailAccountId,
@@ -33,18 +34,22 @@ export async function createEmailProvider({
 
     if (rateLimitProvider === "google") {
       const client = await getGmailClientForEmail({ emailAccountId, logger });
-      return withProviderFailureLogging(
-        new GmailProvider(client, logger, emailAccountId),
-        { emailAccountId, provider: rateLimitProvider, logger },
+      return withCoastlineProviderMutationGuard(
+        withProviderFailureLogging(
+          new GmailProvider(client, logger, emailAccountId),
+          { emailAccountId, provider: rateLimitProvider, logger },
+        ),
       );
     }
 
     const client = await getOutlookClientForEmail({ emailAccountId, logger });
-    return withProviderFailureLogging(new OutlookProvider(client, logger), {
-      emailAccountId,
-      provider: rateLimitProvider,
-      logger,
-    });
+    return withCoastlineProviderMutationGuard(
+      withProviderFailureLogging(new OutlookProvider(client, logger), {
+        emailAccountId,
+        provider: rateLimitProvider,
+        logger,
+      }),
+    );
   } catch (error) {
     logger.warn("Failed to create email provider", {
       error,

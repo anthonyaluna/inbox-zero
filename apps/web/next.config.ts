@@ -452,8 +452,14 @@ if (env.MICROSOFT_CLIENT_ID && !env.MICROSOFT_WEBHOOK_CLIENT_STATE) {
 export default withAxiom(exportConfig);
 
 function commonAncestorPath(firstPath: string, secondPath: string) {
-  const [firstParts, secondParts] = [firstPath, secondPath].map((value) =>
-    path.resolve(value).split(path.sep),
+  const firstAbsolute = path.resolve(firstPath);
+  const secondAbsolute = path.resolve(secondPath);
+  const firstRoot = path.parse(firstAbsolute).root;
+  const secondRoot = path.parse(secondAbsolute).root;
+  if (firstRoot !== secondRoot) return firstRoot;
+
+  const [firstParts, secondParts] = [firstAbsolute, secondAbsolute].map(
+    (value) => value.slice(firstRoot.length).split(path.sep),
   );
   const commonParts: string[] = [];
 
@@ -462,7 +468,5 @@ function commonAncestorPath(firstPath: string, secondPath: string) {
     commonParts.push(firstParts[index]);
   }
 
-  return commonParts.length === 1 && commonParts[0] === ""
-    ? path.sep
-    : commonParts.join(path.sep);
+  return path.join(firstRoot, ...commonParts);
 }

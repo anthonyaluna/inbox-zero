@@ -1,0 +1,145 @@
+name: Coastline staging preflight
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: coastline-staging-preflight
+  cancel-in-progress: false
+
+jobs:
+  ref-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require approved ref and exact protected SHA
+        shell: pwsh
+        env:
+          PROTECTED_SHA: ${{ vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+        run: >-
+          ./scripts/Test-CoastlineWorkflowRef.ps1
+          -WorkflowRef '${{ github.ref }}'
+          -WorkflowSha '${{ github.sha }}'
+          -ProtectedSha $env:PROTECTED_SHA
+
+  quality:
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: "--max_old_space_size=16384"
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/postgres"
+      AUTH_SECRET: "test-secret"
+      GOOGLE_CLIENT_ID: "client_id"
+      GOOGLE_CLIENT_SECRET: "client_secret"
+      MICROSOFT_CLIENT_ID: "client_id"
+      MICROSOFT_CLIENT_SECRET: "client_secret"
+      GOOGLE_PUBSUB_TOPIC_NAME: "topic"
+      EMAIL_ENCRYPT_SECRET: "test-secret"
+      EMAIL_ENCRYPT_SALT: "test-salt"
+      DEFAULT_LLMS: "openai:gpt-5.4-mini"
+      INTERNAL_API_KEY: "test-secret"
+      NEXT_PUBLIC_BASE_URL: "http://localhost:3000"
+      COASTLINE_DRAFT_PROPOSALS_ENABLED: "true"
+      NEXT_PUBLIC_EMAIL_SEND_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm --filter inbox-zero-ai run build:ci
+
+      - name: Run focused Coastline draft-only tests
+        run: >-
+          pnpm --filter inbox-zero-ai exec vitest run
+          utils/coastline/draft-proposal.test.ts
+          utils/ai/actions.test.ts
+
+      - name: Run full web test command
+        run: pnpm -F inbox-zero-ai test
+
+      - name: Check working-tree patch
+        run: git diff --check
+
+      - name: Assert promotion readiness contract
+        shell: pwsh
+        run: >-
+          ./scripts/Assert-CoastlineInboxZeroReadiness.ps1
+          -ExpectedSha '${{ github.sha }}'
+
+  preflight:
+    needs: [ref-guard, quality]
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+    runs-on: ubuntu-latest
+    environment: coastline-inbox-zero-staging
+    env:
+      DATABASE_URL: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_DATABASE_URL }}
+      AUTH_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_AUTH_SECRET }}
+      MICROSOFT_CLIENT_ID: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_ID }}
+      MICROSOFT_CLIENT_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_SECRET }}
+      NEXT_PUBLIC_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_BASE_URL }}
+      COASTLINE_STAGING_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_BASE_URL }}
+      MICROSOFT_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL }}
+      QUEUE_BACKEND: bullmq
+      REDIS_URL: redis://redis:6379
+      COASTLINE_DRAFT_PROPOSALS_ENABLED: "true"
+      NEXT_PUBLIC_EMAIL_SEND_ENABLED: "false"
+      COASTLINE_MICROSOFT_ALLOWED_SCOPES: "openid profile email User.Read offline_access Mail.ReadWrite Calendars.ReadWrite"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Start the existing database and Redis services
+        run: docker compose up -d --wait db redis
+
+      - name: Run local-only Coastline staging configuration preflight
+        shell: pwsh
+        env:
+          CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
+        run: ./scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
+
+  remote-staging-evidence:
+    needs: [ref-guard, quality, preflight]
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+    runs-on: ubuntu-latest
+    environment: coastline-inbox-zero-staging
+    env:
+      COASTLINE_STAGING_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_BASE_URL }}
+      COASTLINE_STAGING_ARTIFACT_SHA: ${{ vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require nonce-bound evidence from the deployed artifact
+        shell: pwsh
+        env:
+          CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
+        run: >-
+          ./scripts/Verify-CoastlineInboxZeroStaging.ps1
+          -BaseUrl $env:COASTLINE_STAGING_BASE_URL
+          -OutputPath (Join-Path $env:RUNNER_TEMP 'coastline-inbox-zero-staging.json')
+
+      - name: Retain sanitized remote staging receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: coastline-inbox-zero-staging-${{ github.sha }}
+          path: ${{ runner.temp }}/coastline-inbox-zero-staging.json
+          if-no-files-found: error
+          retention-days: 7

@@ -4,6 +4,9 @@ import {
   extractDraftPlainText,
   stripQuotedContent,
   isDraftUnmodified,
+  createOrReconcileCoastlineDraft,
+  normalizeRecipientBuckets,
+  updateExecutedActionWithDraftId,
 } from "@/utils/ai/choose-rule/draft-management";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
 import prisma from "@/utils/prisma";
@@ -11,14 +14,46 @@ import { ActionType, DraftEmailStatus } from "@/generated/prisma/enums";
 import type { ParsedMessage } from "@/utils/types";
 import type { EmailProvider } from "@/utils/email/types";
 import { createTestLogger } from "@/__tests__/helpers";
+import {
+  buildDraftIdempotencyKey,
+  createInboxZeroDraftProposal,
+  createInboxZeroDraftReceipt,
+} from "@/utils/coastline/draft-proposal";
+import {
+  reconcileCoastlineDraft,
+  recordCoastlineDraftCreation,
+  reserveOrReconcileCoastlineDraft,
+} from "@/utils/coastline/draft-reservation";
+
+const coastlineEnvironment = vi.hoisted(() => ({
+  coastlineDraftProposalsEnabled: false,
+}));
+
+vi.mock("@/env", () => ({
+  env: {
+    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
+      return coastlineEnvironment.coastlineDraftProposalsEnabled;
+    },
+  },
+}));
 
 vi.mock("@/utils/prisma", () => ({
   default: {
     executedAction: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
+}));
+
+vi.mock("@/utils/coastline/draft-reservation", () => ({
+  reserveOrReconcileCoastlineDraft: vi.fn(),
+  buildCoastlineDraftMarker: vi.fn().mockReturnValue("marker-1"),
+  recordCoastlineDraftCreation: vi.fn(),
+  reconcileCoastlineDraft: vi.fn(),
+  markRecoveryRequired: vi.fn(),
 }));
 
 const previousDraftAction = {
@@ -47,6 +82,7 @@ describe("handlePreviousDraftDeletion", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    coastlineEnvironment.coastlineDraftProposalsEnabled = false;
   });
 
   it("should delete unmodified draft and update draft status", async () => {
@@ -91,6 +127,28 @@ describe("handlePreviousDraftDeletion", () => {
       mockDeleteDraft,
       mockUpdate,
     });
+    expect(result).toEqual({ shouldCreateDraft: true });
+  });
+
+  it("does not delete a prior draft while Coastline draft proposals are enabled", async () => {
+    coastlineEnvironment.coastlineDraftProposalsEnabled = true;
+    mockFindFirst.mockResolvedValue(previousDraftAction);
+    mockGetDraft.mockResolvedValue(
+      createParsedMessage({
+        textPlain:
+          "Hello, this is a test draft\n\nOn Monday wrote:\n> Previous message",
+        snippet: "Hello, this is a test draft",
+      }),
+    );
+
+    const result = await handlePreviousDraftDeletion({
+      client: mockClient,
+      executedRule,
+      logger,
+    });
+
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
     expect(result).toEqual({ shouldCreateDraft: true });
   });
 
@@ -281,6 +339,705 @@ describe("handlePreviousDraftDeletion", () => {
     });
 
     expect(mockDeleteDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateExecutedActionWithDraftId", () => {
+  const logger = createTestLogger();
+  const mockFindUnique = prisma.executedAction.findUnique as Mock;
+  const mockUpdate = prisma.executedAction.update as Mock;
+  const mockUpdateMany = prisma.executedAction.updateMany as Mock;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      draftContextMetadata: {
+        replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
+        retainedContext: { preserve: true },
+      },
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+    mockUpdate.mockResolvedValue({});
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("merges a Coastline receipt without overwriting existing metadata", async () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { id: "action-123" },
+      select: { draftContextMetadata: true, updatedAt: true },
+    });
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "action-123",
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      },
+      data: {
+        draftId: "draft-123",
+        draftStatus: DraftEmailStatus.PENDING,
+        updatedAt: expect.any(Date),
+        draftContextMetadata: {
+          replyMemories: { count: 2, ids: ["memory-1", "memory-2"] },
+          retainedContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      },
+    });
+  });
+
+  it("retries a receipt merge against the latest metadata after a concurrent update", async () => {
+    const firstUpdatedAt = new Date("2026-08-11T12:00:00.000Z");
+    const secondUpdatedAt = new Date("2026-08-11T12:00:01.000Z");
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftContextMetadata: { retainedContext: { preserve: true } },
+        updatedAt: firstUpdatedAt,
+      })
+      .mockResolvedValueOnce({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          concurrentContext: { preserve: true },
+        },
+        updatedAt: secondUpdatedAt,
+      });
+    mockUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "action-123", updatedAt: firstUpdatedAt },
+      data: expect.objectContaining({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      }),
+    });
+    expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "action-123", updatedAt: secondUpdatedAt },
+      data: expect.objectContaining({
+        draftContextMetadata: {
+          retainedContext: { preserve: true },
+          concurrentContext: { preserve: true },
+          coastlineDraft: receipt,
+        },
+      }),
+    });
+  });
+
+  it("surfaces receipt persistence failures with a deterministic error code", async () => {
+    const receipt = createInboxZeroDraftReceipt({
+      proposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "account-123",
+        thread_id: "thread-456",
+        source_message_id: "message-789",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "account-123",
+          threadId: "thread-456",
+          sourceMessageId: "message-789",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftId: "draft-123",
+    });
+    mockFindUnique.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(
+      updateExecutedActionWithDraftId({
+        actionId: "action-123",
+        draftId: "draft-123",
+        receipt,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
+    });
+  });
+
+  it("records a stable execution error when the receipt reaches failed", async () => {
+    const receipt = {
+      ...createInboxZeroDraftReceipt({
+        proposal: createInboxZeroDraftProposal({
+          provider: "microsoft",
+          account_id: "account-123",
+          thread_id: "thread-456",
+          source_message_id: "message-789",
+          to: ["recipient@example.com"],
+          cc: [],
+          bcc: [],
+          subject: "Subject excluded from receipt",
+          body_text: "Body excluded from receipt",
+          confidence: "medium",
+          model: "test-model",
+          idempotency_key: buildDraftIdempotencyKey({
+            accountId: "account-123",
+            threadId: "thread-456",
+            sourceMessageId: "message-789",
+          }),
+          generated_at: "2026-08-11T12:00:00.000Z",
+        }),
+        draftId: "draft-123",
+      }),
+      terminalState: "failed" as const,
+    };
+
+    await updateExecutedActionWithDraftId({
+      actionId: "action-123",
+      draftId: "draft-123",
+      receipt,
+      logger,
+    });
+
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "action-123",
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      },
+      data: expect.objectContaining({
+        executionError: {
+          code: "COASTLINE_DRAFT_RECEIPT_FAILED",
+          message: "Coastline draft receipt recorded a failed state",
+          stack: null,
+          statusCode: null,
+          requestId: null,
+        },
+      }),
+    });
+  });
+});
+
+describe("createOrReconcileCoastlineDraft", () => {
+  const logger = createTestLogger();
+  const mockFindUnique = prisma.executedAction.findUnique as Mock;
+  const mockUpdateMany = prisma.executedAction.updateMany as Mock;
+  const mockReserve = reserveOrReconcileCoastlineDraft as Mock;
+  const mockRecordCreation = recordCoastlineDraftCreation as Mock;
+  const mockReconcile = reconcileCoastlineDraft as Mock;
+  const proposal = createInboxZeroDraftProposal({
+    provider: "microsoft",
+    account_id: "account-123",
+    thread_id: "thread-456",
+    source_message_id: "message-789",
+    to: ["recipient@example.com"],
+    cc: [],
+    bcc: [],
+    subject: "Property documents",
+    body_text: "I will send the lease packet this afternoon.",
+    confidence: "medium",
+    model: "test-model",
+    idempotency_key: buildDraftIdempotencyKey({
+      accountId: "account-123",
+      threadId: "thread-456",
+      sourceMessageId: "message-789",
+    }),
+    generated_at: "2026-08-11T12:00:00.000Z",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockRecordCreation.mockResolvedValue(undefined);
+    mockReconcile.mockResolvedValue({
+      draftId: "draft-123",
+      terminalState: "created_verified",
+    });
+  });
+
+  it("reserves the idempotency key before creating and persists verified readback", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftId: null,
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftContextMetadata: {
+          coastlineDraftReservation: expect.any(Object),
+        },
+        updatedAt: new Date("2026-08-11T12:00:01.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...createInboxZeroDraftReceipt({
+              proposal,
+              draftId: "draft-123",
+            }),
+            readBackAt: "2026-08-11T12:00:03.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+    const createDraft = vi.fn().mockResolvedValue({ draftId: "draft-123" });
+    const getDraft = vi.fn().mockResolvedValue(
+      createParsedMessage({
+        id: "draft-123",
+        threadId: "thread-456",
+        subject: "Property documents",
+        headers: {
+          from: "account@example.com",
+          to: "recipient@example.com",
+          subject: "Property documents",
+          date: "2026-08-11T12:00:00.000Z",
+        },
+        textPlain: "I will send the lease packet this afternoon.",
+      }),
+    );
+
+    const result = await createOrReconcileCoastlineDraft({
+      actionId: "action-123",
+      proposal,
+      client: { getDraft } as unknown as EmailProvider,
+      createDraft,
+      logger,
+    });
+
+    expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
+      createDraft.mock.invocationCallOrder[0],
+    );
+    expect(createDraft).toHaveBeenCalledWith("marker-1");
+    expect(getDraft).toHaveBeenCalledWith("draft-123");
+    expect(result.receipt).toMatchObject({
+      draftId: "draft-123",
+      terminalState: "created_verified",
+      readBackAt: expect.any(String),
+    });
+  });
+
+  it("reconciles a persisted unverified draft without creating another provider draft", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: "draft-123",
+      state: "created_unverified",
+    });
+    const unverifiedReceipt = createInboxZeroDraftReceipt({
+      proposal,
+      draftId: "draft-123",
+    });
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraftReservation: {
+            schemaVersion: "inbox_zero_draft_reservation.v1",
+            idempotencyKey: proposal.idempotency_key,
+            accountId: proposal.account_id,
+            threadId: proposal.thread_id,
+            sourceMessageId: proposal.source_message_id,
+            reservedAt: proposal.generated_at,
+          },
+          coastlineDraft: unverifiedReceipt,
+        },
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...unverifiedReceipt,
+            readBackAt: "2026-08-11T12:00:02.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+    const createDraft = vi.fn();
+    const getDraft = vi.fn().mockResolvedValue(
+      createParsedMessage({
+        id: "draft-123",
+        threadId: "thread-456",
+        subject: "Property documents",
+        headers: {
+          from: "account@example.com",
+          to: "recipient@example.com",
+          subject: "Property documents",
+          date: "2026-08-11T12:00:00.000Z",
+        },
+        textPlain: "I will send the lease packet this afternoon.",
+      }),
+    );
+
+    const result = await createOrReconcileCoastlineDraft({
+      actionId: "action-123",
+      proposal,
+      client: { getDraft } as unknown as EmailProvider,
+      createDraft,
+      logger,
+    });
+
+    expect(createDraft).not.toHaveBeenCalled();
+    expect(result.receipt.terminalState).toBe("created_verified");
+  });
+
+  it("fails closed on an unresolved reservation instead of creating a duplicate", async () => {
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "recovery_required",
+    });
+    mockFindUnique.mockResolvedValueOnce({
+      draftId: null,
+      draftContextMetadata: {
+        coastlineDraftReservation: {
+          schemaVersion: "inbox_zero_draft_reservation.v1",
+          idempotencyKey: proposal.idempotency_key,
+          accountId: proposal.account_id,
+          threadId: proposal.thread_id,
+          sourceMessageId: proposal.source_message_id,
+          reservedAt: proposal.generated_at,
+        },
+      },
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+    const createDraft = vi.fn();
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal,
+        client: { getDraft: vi.fn() } as unknown as EmailProvider,
+        createDraft,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_RECOVERY_REQUIRED",
+    });
+    expect(createDraft).not.toHaveBeenCalled();
+  });
+
+  it("reuses the provider draft after action receipt persistence fails", async () => {
+    mockReserve
+      .mockResolvedValueOnce({
+        reservationId: "reservation-1",
+        draftId: null,
+        state: "reserved",
+      })
+      .mockResolvedValueOnce({
+        reservationId: "reservation-1",
+        draftId: "draft-123",
+        state: "created_unverified",
+      });
+    mockFindUnique.mockResolvedValue(null);
+    const createDraft = vi.fn().mockResolvedValue({ draftId: "draft-123" });
+    const getDraft = vi.fn().mockResolvedValue(
+      createParsedMessage({
+        id: "draft-123",
+        threadId: "thread-456",
+        subject: "Property documents",
+        headers: {
+          from: "account@example.com",
+          to: "recipient@example.com",
+          subject: "Property documents",
+          date: "2026-08-11T12:00:00.000Z",
+        },
+        textPlain: "I will send the lease packet this afternoon.",
+      }),
+    );
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-1",
+        proposal,
+        client: { getDraft } as unknown as EmailProvider,
+        createDraft,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_RECEIPT_PERSISTENCE_FAILED",
+    });
+
+    mockFindUnique.mockReset();
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...createInboxZeroDraftReceipt({ proposal, draftId: "draft-123" }),
+            readBackAt: "2026-08-11T12:00:01.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+
+    await createOrReconcileCoastlineDraft({
+      actionId: "action-2",
+      proposal,
+      client: { getDraft } as unknown as EmailProvider,
+      createDraft,
+      logger,
+    });
+
+    expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails readback when a To recipient is returned as BCC", async () => {
+    const proposalWithBcc = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockResolvedValue({
+      draftId: null,
+      draftContextMetadata: {},
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithBcc,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "bcc@example.com",
+                cc: "",
+                bcc: "to@example.com",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_READBACK_FAILED",
+    });
+  });
+
+  it("accepts readback when each recipient remains in its original bucket", async () => {
+    const proposalWithRecipientBuckets = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com", "second@example.com"],
+      cc: ["cc@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockReset();
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftId: null,
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:01.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...createInboxZeroDraftReceipt({
+              proposal: proposalWithRecipientBuckets,
+              draftId: "draft-123",
+            }),
+            readBackAt: "2026-08-11T12:00:03.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithRecipientBuckets,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "Second <SECOND@example.com>; To <TO@example.com>",
+                cc: "CC <CC@example.com>",
+                bcc: "BCC <BCC@example.com>",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).resolves.toMatchObject({
+      draftId: "draft-123",
+      receipt: { terminalState: "created_verified" },
+    });
+  });
+
+  it("fails readback when a CC recipient is returned as To", async () => {
+    const proposalWithCc = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com"],
+      cc: ["cc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockResolvedValue({
+      draftId: null,
+      draftContextMetadata: {},
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithCc,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "cc@example.com",
+                cc: "to@example.com",
+                bcc: "",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_READBACK_FAILED",
+    });
+  });
+});
+
+describe("normalizeRecipientBuckets", () => {
+  it("normalizes duplicate recipients within their original buckets", () => {
+    expect(
+      normalizeRecipientBuckets({
+        to: [
+          "  Primary Recipient <PRIMARY@example.com> ",
+          "secondary@example.com",
+          "primary@example.com",
+        ],
+        cc: ["  Carbon <CC@example.com> "],
+        bcc: ["  Blind <BCC@example.com> "],
+      }),
+    ).toEqual({
+      to: ["primary@example.com", "secondary@example.com"],
+      cc: ["cc@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+  });
+
+  it("keeps empty optional CC and BCC buckets empty", () => {
+    expect(
+      normalizeRecipientBuckets({
+        to: ["recipient@example.com"],
+      }),
+    ).toEqual({
+      to: ["recipient@example.com"],
+      cc: [],
+      bcc: [],
+    });
   });
 });
 

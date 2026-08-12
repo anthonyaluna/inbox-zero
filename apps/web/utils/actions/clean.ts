@@ -28,6 +28,8 @@ import { isGoogleProvider } from "@/utils/email/provider-types";
 import { getUserPremium } from "@/utils/user/get";
 import { isActivePremium } from "@/utils/premium";
 import { ONE_DAY_MS } from "@/utils/date";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 export const cleanInboxAction = actionClient
   .metadata({ name: "cleanInbox" })
@@ -37,6 +39,11 @@ export const cleanInboxAction = actionClient
       ctx: { emailAccountId, provider, userId, logger },
       parsedInput: { action, instructions, daysOld, skips, maxEmails },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/clean-inbox",
+        mutation: "CLEAN_INBOX",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       if (!isGoogleProvider(provider)) {
         throw new SafeError(
           "Clean inbox is only supported for Google accounts",
@@ -176,6 +183,11 @@ export const undoCleanInboxAction = actionClient
       ctx: { emailAccountId, logger },
       parsedInput: { threadId, markedDone, action },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/undo-clean-inbox",
+        mutation: "UNDO_CLEAN_INBOX",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       const gmail = await getGmailClientForEmail({ emailAccountId, logger });
 
       // nothing to do atm if wasn't marked done
@@ -241,6 +253,11 @@ export const changeKeepToDoneAction = actionClient
       ctx: { emailAccountId, logger },
       parsedInput: { threadId, action },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/change-keep-to-done",
+        mutation: "CHANGE_KEEP_TO_DONE",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       const gmail = await getGmailClientForEmail({ emailAccountId, logger });
 
       // Get the label to add (archived or marked_read)

@@ -17,10 +17,14 @@ import {
 import { env } from "@/env";
 import { runWithAuditContext, setAuditContext } from "@/utils/audit/context";
 import { isEmailProviderRateLimitError } from "@/utils/email/is-provider-rate-limit-error";
+import {
+  assertCoastlineMutationAllowed,
+  CoastlineDraftOnlyPolicyError,
+} from "@/utils/coastline/draft-only-policy";
 
 const baseClient = createSafeActionClient({
   defineMetadataSchema() {
-    return z.object({ name: z.string() });
+    return z.object({ name: z.string(), mutation: z.string().optional() });
   },
   defaultValidationErrorsShape: "flattened",
   handleServerError(error, { metadata, ctx, bindArgsClientInputs }) {
@@ -50,7 +54,11 @@ const baseClient = createSafeActionClient({
 
     // Expected user-facing rejections are shown to the client and never sent
     // to Sentry.
-    if (error instanceof SafeError || isProviderRateLimit) {
+    if (
+      error instanceof SafeError ||
+      error instanceof CoastlineDraftOnlyPolicyError ||
+      isProviderRateLimit
+    ) {
       logger.warn("Server action error:", {
         metadata,
         bindArgsClientInputs,
@@ -76,6 +84,7 @@ const baseClient = createSafeActionClient({
       console.error("Error in server action", error);
     }
     if (isProviderRateLimit) return EMAIL_PROVIDER_RATE_LIMIT_MESSAGE;
+    if (error instanceof CoastlineDraftOnlyPolicyError) return error.message;
     if (error instanceof SafeError) return error.message;
 
     captureException(error, {
@@ -92,6 +101,11 @@ const baseClient = createSafeActionClient({
     return "An unknown error occurred.";
   },
 }).use(async ({ next, metadata }) => {
+  assertCoastlineMutationAllowed({
+    surface: `server-action:${metadata.name}`,
+    mutation: metadata.mutation ?? metadata.name,
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
   const requestId = randomUUID();
   const logger = createScopedLogger(metadata.name).with({ requestId });
 

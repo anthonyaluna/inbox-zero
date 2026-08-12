@@ -591,6 +591,7 @@ async function executeMatchedRule(
         emailAccount: {
           email: emailAccount.email,
           id: emailAccount.id,
+          timezone: emailAccount.timezone,
           userId: emailAccount.userId,
         },
         logger,

@@ -28,6 +28,8 @@ import {
   type ChatCreateRuleToolInvocation,
 } from "@/utils/ai/assistant/tools/rules/shared";
 import { createRule } from "@/utils/rule/rule";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 const CONFIRMATION_IN_PROGRESS_ERROR =
   "Email action confirmation already in progress";
@@ -89,6 +91,11 @@ export async function confirmAssistantEmailActionForAccount({
   provider: string;
   logger: Logger;
 }) {
+  assertCoastlineMutationAllowed({
+    surface: "assistant-chat/confirm-email-action",
+    mutation: "CONFIRM_ASSISTANT_EMAIL_ACTION",
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
   const reservation = await reservePendingAssistantEmailAction({
     chatId,
     chatMessageId,
@@ -188,6 +195,11 @@ export async function confirmAssistantCreateRuleForAccount({
   provider: string;
   logger: Logger;
 }) {
+  assertCoastlineMutationAllowed({
+    surface: "assistant-chat/confirm-create-rule",
+    mutation: "CONFIRM_ASSISTANT_CREATE_RULE",
+    coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+  });
   const reservation = await reservePendingAssistantCreateRule({
     chatId,
     chatMessageId,

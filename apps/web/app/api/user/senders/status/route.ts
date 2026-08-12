@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withEmailProvider } from "@/utils/middleware";
 import { setSenderStatusBody } from "@/utils/actions/unsubscriber.validation";
 import { setSenderStatusWithAutoArchive } from "@/utils/senders/unsubscribe";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export type SetSenderStatusResponse = Awaited<
   ReturnType<typeof setSenderStatusWithAutoArchive>
@@ -14,7 +15,7 @@ export type SetSenderStatusResponse = Awaited<
  * Existing mail from the sender is left alone; archiving the backlog is a
  * separate bulk operation.
  */
-export const POST = withEmailProvider(
+const setSenderStatusPost = withEmailProvider(
   "user/senders/status",
   async (request) => {
     const { senderEmail, status, labelId, labelName } =
@@ -31,4 +32,9 @@ export const POST = withEmailProvider(
 
     return NextResponse.json(result satisfies SetSenderStatusResponse);
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "user/senders/status", mutation: "SET_SENDER_STATUS" },
+  setSenderStatusPost,
 );

@@ -14,17 +14,22 @@ import {
   getMessagingRuleNotificationResult,
   sendMessagingRuleNotification,
 } from "@/utils/messaging/rule-notifications";
-import { handlePreviousDraftDeletion } from "@/utils/ai/choose-rule/draft-management";
+import {
+  createOrReconcileCoastlineDraft,
+  handlePreviousDraftDeletion,
+} from "@/utils/ai/choose-rule/draft-management";
 import { sendColdEmailNotification } from "@/utils/cold-email/send-notification";
 import type { ParsedMessage } from "@/utils/types";
 import prisma from "@/utils/prisma";
 import { createTestLogger } from "@/__tests__/helpers";
+import { parseInboxZeroDraftProposal } from "@/utils/coastline/draft-proposal";
 
 const { mockEnv } = vi.hoisted(() => ({
   mockEnv: {
     deleteEmailActionEnabled: true,
     autoDraftDisabled: false,
     emailSendEnabled: true,
+    coastlineDraftProposalsEnabled: false,
   },
 }));
 
@@ -38,6 +43,9 @@ vi.mock("@/env", () => ({
     },
     get NEXT_PUBLIC_EMAIL_SEND_ENABLED() {
       return mockEnv.emailSendEnabled;
+    },
+    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
+      return mockEnv.coastlineDraftProposalsEnabled;
     },
   },
 }));
@@ -62,6 +70,26 @@ vi.mock("@/utils/ai/choose-rule/draft-management", () => ({
   handlePreviousDraftDeletion: vi.fn().mockResolvedValue({
     shouldCreateDraft: true,
   }),
+  createOrReconcileCoastlineDraft: vi.fn(
+    async ({ createDraft, proposal }: any) => {
+      const result = await createDraft();
+      return {
+        draftId: result.draftId,
+        receipt: {
+          schemaVersion: "inbox_zero_draft_receipt.v1",
+          provider: "microsoft",
+          accountId: proposal.account_id,
+          threadId: proposal.thread_id,
+          sourceMessageId: proposal.source_message_id,
+          idempotencyKey: proposal.idempotency_key,
+          draftId: result.draftId,
+          generatedAt: proposal.generated_at,
+          readBackAt: "2026-08-11T12:00:01.000Z",
+          terminalState: "created_verified",
+        },
+      };
+    },
+  ),
 }));
 
 vi.mock("@/utils/cold-email/send-notification", () => ({
@@ -102,6 +130,10 @@ describe("runActionFunction", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.deleteEmailActionEnabled = true;
+    mockEnv.autoDraftDisabled = false;
+    mockEnv.emailSendEnabled = true;
+    mockEnv.coastlineDraftProposalsEnabled = false;
     vi.mocked(prisma.executedAction.update).mockResolvedValue({});
     vi.mocked(getMessagingRuleNotificationResult).mockResolvedValue({
       delivered: true,
@@ -111,6 +143,26 @@ describe("runActionFunction", () => {
     vi.mocked(handlePreviousDraftDeletion).mockResolvedValue({
       shouldCreateDraft: true,
     });
+    vi.mocked(createOrReconcileCoastlineDraft).mockImplementation(
+      async ({ createDraft, proposal }: any) => {
+        const result = await createDraft();
+        return {
+          draftId: result.draftId,
+          receipt: {
+            schemaVersion: "inbox_zero_draft_receipt.v1",
+            provider: "microsoft",
+            accountId: proposal.account_id,
+            threadId: proposal.thread_id,
+            sourceMessageId: proposal.source_message_id,
+            idempotencyKey: proposal.idempotency_key,
+            draftId: result.draftId,
+            generatedAt: proposal.generated_at,
+            readBackAt: "2026-08-11T12:00:01.000Z",
+            terminalState: "created_verified",
+          },
+        };
+      },
+    );
   });
 
   it("passes resolved drive attachments into draft creation", async () => {
@@ -178,7 +230,144 @@ describe("runActionFunction", () => {
         ],
       }),
       emailAccount.email,
+      undefined,
+      undefined,
     );
+  });
+
+  it("returns a validated Microsoft draft-only proposal when enabled", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    const result = await runActionFunction({
+      client,
+      email,
+      action: {
+        id: "action-1",
+        type: ActionType.DRAFT_EMAIL,
+        content: "I will send the lease packet this afternoon.",
+      },
+      emailAccount,
+      executedRule: {
+        id: "executed-rule-1",
+        threadId: "thread-1",
+        emailAccountId: "account-1",
+        ruleId: "rule-1",
+      } as any,
+      logger,
+    });
+
+    expect(result).toMatchObject({
+      draftId: "draft1",
+      draftProposal: {
+        schema_version: "inbox_zero_draft_proposal.v1",
+        source: "inbox_zero",
+        action: "draft_only",
+        provider: "microsoft",
+        account_id: "account-1",
+        thread_id: "thread-1",
+        source_message_id: "message-1",
+        to: ["sender@example.com"],
+        subject: "Property documents",
+        body_text: "I will send the lease packet this afternoon.",
+      },
+    });
+    expect(() =>
+      parseInboxZeroDraftProposal((result as any).draftProposal),
+    ).not.toThrow();
+    expect((result as any).draftReceipt).toMatchObject({
+      draftId: "draft1",
+      terminalState: "created_verified",
+    });
+  });
+
+  it("never invokes previous-draft cleanup or provider deletion in Coastline mode", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    await runActionFunction({
+      client,
+      email,
+      action: {
+        id: "action-1",
+        type: ActionType.DRAFT_EMAIL,
+        content: "I will send the lease packet this afternoon.",
+      },
+      emailAccount,
+      executedRule: {
+        id: "executed-rule-1",
+        threadId: "thread-1",
+        emailAccountId: "account-1",
+        ruleId: "rule-1",
+      } as any,
+      logger,
+    });
+
+    expect(handlePreviousDraftDeletion).not.toHaveBeenCalled();
+    expect(client.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before provider mutation when a Coastline draft has no proposal body", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    await expect(
+      runActionFunction({
+        client,
+        email,
+        action: {
+          id: "action-1",
+          type: ActionType.DRAFT_EMAIL,
+          content: "   ",
+        },
+        emailAccount,
+        executedRule: {
+          id: "executed-rule-1",
+          threadId: "thread-1",
+          emailAccountId: "account-1",
+          ruleId: "rule-1",
+        } as any,
+        logger,
+      }),
+    ).rejects.toMatchObject({ code: "COASTLINE_DRAFT_PROPOSAL_REQUIRED" });
+
+    expect(handlePreviousDraftDeletion).not.toHaveBeenCalled();
+    expect(createOrReconcileCoastlineDraft).not.toHaveBeenCalled();
+    expect(client.draftEmail).not.toHaveBeenCalled();
+    expect(client.deleteDraft).not.toHaveBeenCalled();
+  });
+
+  it("blocks Coastline-enabled Microsoft sends before provider mutation", async () => {
+    mockEnv.coastlineDraftProposalsEnabled = true;
+    const client = createMockEmailProvider({ name: "microsoft" });
+
+    await expect(
+      runActionFunction({
+        client,
+        email,
+        action: {
+          id: "action-1",
+          type: ActionType.SEND_EMAIL,
+          to: "recipient@example.com",
+          subject: "Property documents",
+          content: "Please find the requested documents attached.",
+        },
+        emailAccount,
+        executedRule: {
+          id: "executed-rule-1",
+          threadId: "thread-1",
+          emailAccountId: "account-1",
+          ruleId: "rule-1",
+        } as any,
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+      actionType: ActionType.SEND_EMAIL,
+    });
+
+    expect(resolveDraftAttachments).not.toHaveBeenCalled();
+    expect(client.sendEmail).not.toHaveBeenCalled();
   });
 
   it("skips draft attachments when no selected attachments were persisted", async () => {
@@ -211,6 +400,8 @@ describe("runActionFunction", () => {
         attachments: [],
       }),
       emailAccount.email,
+      undefined,
+      undefined,
     );
   });
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withEmailProvider } from "@/utils/middleware";
 import { sendEmailBody } from "@/utils/gmail/mail";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 export type SendMessageResponse = {
   success: true;
@@ -14,7 +15,7 @@ export type SendMessageResponse = {
  * pass `replyToEmail` (threadId + headerMessageId + references) to reply on
  * an existing thread, or omit it to send a new email.
  */
-export const POST = withEmailProvider("messages/send", async (request) => {
+const sendMessagePost = withEmailProvider("messages/send", async (request) => {
   const body = sendEmailBody.parse(await request.json());
 
   try {
@@ -37,3 +38,8 @@ export const POST = withEmailProvider("messages/send", async (request) => {
     );
   }
 });
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "messages/send", mutation: "SEND_EMAIL" },
+  sendMessagePost,
+);

@@ -3,6 +3,8 @@
 import { actionClient } from "@/utils/actions/safe-action";
 import { bulkSenderActionSchema } from "@/utils/actions/mail-bulk-action.validation";
 import { createEmailProvider } from "@/utils/email/provider";
+import { env } from "@/env";
+import { assertCoastlineMutationAllowed } from "@/utils/coastline/draft-only-policy";
 
 export const bulkArchiveAction = actionClient
   .metadata({ name: "bulkArchive" })
@@ -12,6 +14,11 @@ export const bulkArchiveAction = actionClient
       ctx: { emailAccountId, provider, emailAccount, logger },
       parsedInput: { froms },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/bulk-archive",
+        mutation: "BULK_ARCHIVE",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,
@@ -34,6 +41,11 @@ export const bulkTrashAction = actionClient
       ctx: { emailAccountId, provider, emailAccount, logger },
       parsedInput: { froms },
     }) => {
+      assertCoastlineMutationAllowed({
+        surface: "server-action/bulk-trash",
+        mutation: "BULK_TRASH",
+        coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+      });
       const emailProvider = await createEmailProvider({
         emailAccountId,
         provider,

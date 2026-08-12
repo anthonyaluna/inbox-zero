@@ -6,6 +6,7 @@ import {
 } from "@/utils/actions/rule.validation";
 import { createRuleAction } from "@/utils/actions/rule";
 import { withEmailAccount } from "@/utils/middleware";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 import { aiPromptToRules } from "@/utils/ai/rule/prompt-to-rules";
 import { getEmailAccountWithAi } from "@/utils/user/get";
 import { toCreateRuleBodyFromAiRule } from "@/utils/rule/mobile-rule";
@@ -23,7 +24,7 @@ const bodySchema = z.discriminatedUnion("source", [
   }),
 ]);
 
-export const POST = withEmailAccount("mobile/rules/create", async (request) => {
+const createRulePost = withEmailAccount("mobile/rules/create", async (request) => {
   const body = bodySchema.parse(await request.json());
   const emailAccountId = request.auth.emailAccountId;
 
@@ -66,3 +67,8 @@ export const POST = withEmailAccount("mobile/rules/create", async (request) => {
 
   return NextResponse.json({ rule: result.data.rule }, { status: 201 });
 });
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "mobile/rules/create", mutation: "CREATE_RULE" },
+  createRulePost,
+);

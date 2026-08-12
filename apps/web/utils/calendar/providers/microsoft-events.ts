@@ -3,6 +3,7 @@ import { getCalendarClientWithRefresh } from "@/utils/outlook/calendar-client";
 import type {
   CalendarEvent,
   CalendarEventCancelInput,
+  CalendarEventReadProvider,
   CalendarEventProvider,
   CalendarEventUpdateInput,
   CalendarEventWriteInput,
@@ -27,8 +28,8 @@ type MicrosoftEvent = {
   subject?: string;
   body?: { content?: string };
   bodyPreview?: string;
-  start?: { dateTime?: string };
-  end?: { dateTime?: string };
+  start?: { dateTime?: string; timeZone?: string };
+  end?: { dateTime?: string; timeZone?: string };
   attendees?: Array<{
     emailAddress?: { address?: string; name?: string };
     status?: { response?: string };
@@ -52,7 +53,9 @@ type MicrosoftOnlineMeetingFields = {
   isOnlineMeeting: true;
 };
 
-export class MicrosoftCalendarEventProvider implements CalendarEventProvider {
+export class MicrosoftCalendarEventProvider
+  implements CalendarEventProvider, CalendarEventReadProvider
+{
   private readonly connection: MicrosoftCalendarConnectionParams;
   private readonly logger: Logger;
 
@@ -164,12 +167,16 @@ export class MicrosoftCalendarEventProvider implements CalendarEventProvider {
           content: input.description || "",
         },
         start: {
-          dateTime: formatMicrosoftUtcDateTime(input.startTime),
-          timeZone: "UTC",
+          dateTime: input.preserveTimezone
+            ? formatMicrosoftDateTime(input.startTime, input.timezone)
+            : formatMicrosoftUtcDateTime(input.startTime),
+          timeZone: input.preserveTimezone ? input.timezone : "UTC",
         },
         end: {
-          dateTime: formatMicrosoftUtcDateTime(input.endTime),
-          timeZone: "UTC",
+          dateTime: input.preserveTimezone
+            ? formatMicrosoftDateTime(input.endTime, input.timezone)
+            : formatMicrosoftUtcDateTime(input.endTime),
+          timeZone: input.preserveTimezone ? input.timezone : "UTC",
         },
         attendees: input.attendees.map((attendee) => ({
           emailAddress: {
@@ -238,6 +245,20 @@ export class MicrosoftCalendarEventProvider implements CalendarEventProvider {
     };
   }
 
+  async getEvent({
+    calendarId,
+    eventId,
+  }: {
+    calendarId: string;
+    eventId: string;
+  }): Promise<CalendarEvent | null> {
+    const client = await this.getClient();
+    const event: MicrosoftEvent | null = await client
+      .api(`/me/calendars/${calendarId}/events/${eventId}`)
+      .get();
+    return event ? this.parseEvent(event) : null;
+  }
+
   async cancelEvent(input: CalendarEventCancelInput): Promise<void> {
     const client = await this.getClient();
 
@@ -276,6 +297,7 @@ export class MicrosoftCalendarEventProvider implements CalendarEventProvider {
         ),
       startTime: new Date(event.start?.dateTime || Date.now()),
       endTime: new Date(event.end?.dateTime || Date.now()),
+      timezone: event.start?.timeZone,
       organizerEmail: event.organizer?.emailAddress?.address || undefined,
       isOrganizer: event.isOrganizer,
       attendees:
@@ -291,6 +313,17 @@ export class MicrosoftCalendarEventProvider implements CalendarEventProvider {
 function formatMicrosoftUtcDateTime(date: Date) {
   // Graph DateTimeTimeZone expects a local datetime for the supplied timezone.
   return date.toISOString().replace(/Z$/, "0000");
+}
+
+function formatMicrosoftDateTime(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+    minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((value) => value.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}:${part("second")}.0000000`;
 }
 
 function getJoinUrl(event: MicrosoftEvent): string | undefined {

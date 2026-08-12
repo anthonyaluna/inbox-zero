@@ -1,0 +1,183 @@
+---
+title: Coastline local draft-only pilot
+description: Boundary contract for using Inbox Zero with Coastline's Microsoft 365 draft workflow.
+---
+
+# Coastline local draft-only pilot
+
+This fork is used for a single-user Omen evaluation. It may read and classify a
+Microsoft 365 mailbox and propose a reply draft. It must not send, delete,
+archive, mark messages read, move messages, change labels, unsubscribe, or
+create rules.
+
+When `COASTLINE_DRAFT_PROPOSALS_ENABLED=true` is set in the local environment,
+the Microsoft `DRAFT_EMAIL` action returns and validates the versioned
+`inbox_zero_draft_proposal.v1` contract from
+`apps/web/utils/coastline/draft-proposal.ts`. The existing Inbox Zero draft
+creator still owns the Microsoft Graph draft write, while the Coastline adapter
+maps the validated proposal to `outlook_draft_create`. The action executor
+validates the proposal again before recording the draft ID. No send call is
+made.
+
+The proposal body is transient pilot data. Durable records should retain only
+the account, thread, source message, model, confidence, idempotency key, and
+execution receipt fields needed for audit. Do not commit mailbox contents,
+OAuth tokens, cookies, or local exports.
+
+The pilot is local-only by default. A reproducible staging environment is
+allowed only when it remains Microsoft draft-only and uses the emulator URL.
+Do not connect the shared AP mailbox or any production mailbox until a separate
+lane review confirms the Microsoft Graph identity, scope, target mailbox,
+rollback path, and terminal readback.
+
+## Staging contract
+
+Use the protected GitHub environment `coastline-inbox-zero-staging` and bind
+the following variable names in the deployment; never commit their values.
+Its deployment branch rule is the protected `refs/heads/main` branch only, and
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA` must equal the intended 40-character
+artifact SHA. Configure at least one required staging reviewer and prevent
+self-review. Reviewer identities remain `Pending` until independently read back
+from the GitHub Environment and retained in an out-of-repository receipt.
+
+The required environment secrets are
+`COASTLINE_INBOX_ZERO_STAGING_DATABASE_URL`,
+`COASTLINE_INBOX_ZERO_STAGING_AUTH_SECRET`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_ID`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_SECRET`, and
+`COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET`. Required non-secret variables are
+`COASTLINE_INBOX_ZERO_STAGING_BASE_URL`,
+`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL`, and
+`COASTLINE_INBOX_ZERO_PROTECTED_SHA`. Store names in documentation and receipts;
+never store their values in Git.
+
+Workflow ref and SHA guards complement environment protection. They do not
+prove or replace the environment's deployment-branch restriction, required
+reviewers, self-review prevention, or protected secret/variable configuration.
+The machine-checkable contract is documented in
+[`docs/operations/inbox-zero-promotion-evidence-contract.md`](../operations/inbox-zero-promotion-evidence-contract.md).
+
+`MICROSOFT_BASE_URL` must resolve to
+`localhost` or the `microsoft-emulator` Docker service, not Microsoft Graph.
+`NEXT_PUBLIC_BASE_URL` is the staging origin; register
+`${NEXT_PUBLIC_BASE_URL}/api/outlook/linking/callback` as the Microsoft OAuth
+redirect URL.
+
+```text
+DATABASE_URL=<protected staging database URL>
+AUTH_SECRET=<protected secret>
+MICROSOFT_CLIENT_ID=<staging emulator client ID>
+MICROSOFT_CLIENT_SECRET=<protected staging emulator client secret>
+NEXT_PUBLIC_BASE_URL=https://inbox-zero-staging.example.test
+COASTLINE_STAGING_BASE_URL=https://inbox-zero-staging.example.test
+COASTLINE_STAGING_ARTIFACT_SHA=<protected approved 40-character SHA>
+COASTLINE_DEPLOYED_ARTIFACT_SHA=<immutable SHA injected by the deployer>
+COASTLINE_STAGING_QUEUE_NAME=<deployed BullMQ queue name>
+MICROSOFT_BASE_URL=http://microsoft-emulator:4003
+QUEUE_BACKEND=bullmq
+REDIS_URL=redis://redis:6379
+CRON_SECRET=<protected secret>
+COASTLINE_DRAFT_PROPOSALS_ENABLED=true
+NEXT_PUBLIC_EMAIL_SEND_ENABLED=false
+```
+
+`Mail.Send` is disabled by `NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`; the
+Coastline policy additionally rejects every non-draft mutation before it can
+reach a provider. Do not substitute a live Microsoft endpoint, enable send, or
+run the verification scripts against production.
+
+`COASTLINE_STAGING_BASE_URL` is a protected deployment value and must exactly
+match `-BaseUrl` for non-loopback verification. A hostname containing words
+such as `staging`, `test`, or `emulator` is not evidence that an endpoint is
+safe. Loopback is the only implicit local exception.
+
+`COASTLINE_STAGING_ARTIFACT_SHA` is the approved SHA protected by the GitHub
+environment. `COASTLINE_DEPLOYED_ARTIFACT_SHA` must come from immutable
+deployment metadata, not a request or local Git checkout, and must match it.
+The evidence endpoint reads worker identity from the active BullMQ worker
+registration for `COASTLINE_STAGING_QUEUE_NAME`; it derives queue identity from
+that deployed queue and proves reachability through its Redis client. The
+connection string and worker registration details are never returned.
+
+From the staging host, run the preflight before releasing an artifact:
+
+```powershell
+pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
+```
+
+After the app, worker, Redis queue, and cron container are running, verify the
+staging deployment and retain only the sanitized receipt:
+
+```powershell
+pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
+  -BaseUrl https://inbox-zero-staging.example.test `
+  -OutputPath C:\staging-receipts\inbox-zero-staging.json
+```
+
+The verifier first performs an unauthenticated cron request and requires a
+`401` response, then uses `CRON_SECRET` only for authenticated probes. It
+requires `/api/coastline/staging-evidence` to return the current timestamped
+nonce, protected artifact SHA, matching cron evidence ID, a running registered
+worker, and a reachable deployed queue. A missing endpoint, mismatch, stale
+nonce, or unavailable runtime produces a failed receipt. A loopback, local
+Docker, or emulator pass is emitted with `provenance=local_diagnostic` and
+`is_loopback=true` when applicable. It is local diagnostic evidence only and is
+never a staging pass. Promotion accepts only a fresh exact receipt marked
+`provenance=remote_https` and `is_loopback=false` for the protected SHA.
+
+## Windows Omen startup
+
+For the isolated Windows checkout, start the local services first:
+
+```powershell
+docker compose up -d db redis serverless-redis-http
+pnpm.cmd --filter inbox-zero-ai exec prisma generate
+pnpm.cmd --filter inbox-zero-ai exec prisma migrate deploy --schema prisma/schema.prisma
+```
+
+Start the emulators with the committed `emulate.config.yaml` seed, then start
+the web app with the local `.env.local` file. Use the local Ollama container or
+another explicitly configured development model for AI drafting. Verify
+`http://localhost:3000`, `http://localhost:3002/.well-known/openid-configuration`,
+and `http://localhost:3003/.well-known/openid-configuration` before testing the
+draft flow.
+
+On Windows, use `pnpm.cmd` for child processes. The upstream development
+helper currently assumes a Unix `pnpm` shim and a local `psql` binary, so the
+direct commands above avoid those two host-specific startup failures.
+
+## Fixture validation
+
+Run the contract and action tests without external systems:
+
+```powershell
+pnpm.cmd --filter inbox-zero-ai exec vitest run `
+  utils/coastline/draft-proposal.test.ts `
+  utils/ai/actions.test.ts
+```
+
+Run the Microsoft emulator read-after-write fixture:
+
+```powershell
+$env:RUN_INTEGRATION_TESTS = "1"
+pnpm.cmd --filter inbox-zero-ai exec vitest run `
+  utils/coastline/draft-proposal.integration.test.ts
+```
+
+## Operational readiness boundary
+
+The current decision and exact local validation evidence are recorded in
+[`docs/operations/inbox-zero-operational-readiness.md`](../operations/inbox-zero-operational-readiness.md).
+This lane remains **pilot-only** until a clean staging deployment, independent
+Microsoft draft-only canary, same-key replay proof, rollback exercise, and
+reviewed pull request are evidenced for one current promotion nonce. The remote
+receipt must bind the deployed worker artifact and heartbeat; rollback must
+cross-reference that remote receipt and the canary/replay proof. Local emulator
+and mocked-contract results do not meet that boundary.
+
+Task 5's runner-level test-harness hardening is parked: the invalid
+string-count path is not reliably catchable while the PowerShell runner uses
+`exit 1` when dot-sourced. A real canary separately requires a registered
+staging executor, independent verifier, and approved dedicated non-production
+mailbox fixture. Do not replace either requirement with a production or
+shared-mailbox test.

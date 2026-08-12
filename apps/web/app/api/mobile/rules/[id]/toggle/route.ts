@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { toggleRuleAction } from "@/utils/actions/rule";
 import { withEmailAccount } from "@/utils/middleware";
+import { withCoastlineMutationGuard } from "@/utils/coastline/mutation-route-guard";
 
 const bodySchema = z.object({ enabled: z.boolean() });
 
-export const POST = withEmailAccount(
+const toggleRulePost = withEmailAccount(
   "mobile/rules/toggle",
   async (request, { params }) => {
     const { id } = await params;
@@ -21,4 +22,9 @@ export const POST = withEmailAccount(
 
     return NextResponse.json({ success: true });
   },
+);
+
+export const POST = withCoastlineMutationGuard(
+  { surface: "mobile/rules/toggle", mutation: "TOGGLE_RULE" },
+  toggleRulePost,
 );

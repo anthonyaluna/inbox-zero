@@ -20,6 +20,13 @@ import {
   normalizeActionExecutionError,
   persistExecutedActionOutcome,
 } from "@/utils/ai/executed-action-outcome";
+import {
+  parseInboxZeroDraftReceipt,
+  type InboxZeroDraftReceipt,
+  parseInboxZeroDraftProposal,
+} from "@/utils/coastline/draft-proposal";
+import { classifyCalendarContext } from "@/utils/coastline/calendar-context-broker";
+import { dispatchClearCoastlineCalendarProposal } from "@/utils/coastline/action-router";
 
 const MODULE = "ai-execute-act";
 
@@ -55,6 +62,7 @@ export async function executeAct({
   });
 
   const actionFailures: ActionFailure[] = [];
+  let calendarContextEvaluated = false;
 
   for (const action of executedRule.actionItems) {
     try {
@@ -74,6 +82,27 @@ export async function executeAct({
           logger: log,
         });
         continue;
+      }
+
+      if (!calendarContextEvaluated && client.name === "microsoft") {
+        calendarContextEvaluated = true;
+        const calendarContext = classifyCalendarContext({
+          message,
+          accountId: emailAccount.id,
+          accountEmail: emailAccount.email,
+          defaultTimezone: emailAccount.timezone,
+        });
+        if (calendarContext.status === "clear" && calendarContext.proposal) {
+          const calendarResult = await dispatchClearCoastlineCalendarProposal({
+            proposal: calendarContext.proposal,
+            logger: log,
+          });
+          log.info("Clear calendar proposal dispatched", {
+            eventId: calendarResult.receipt.eventId,
+            sourceMessageId: message.id,
+            idempotencyKey: calendarContext.proposal.idempotencyKey,
+          });
+        }
       }
 
       const actionResult = await runActionFunction({
@@ -108,31 +137,70 @@ export async function executeAct({
           error: actionResultError,
           logger: log,
         });
-      } else {
-        await persistExecutedActionOutcome({
-          actionId: action.id,
-          status: ExecutedActionStatus.SUCCEEDED,
-          error: null,
-          logger: log,
-        });
+        continue;
       }
 
       const draftId =
         action.type === ActionType.DRAFT_EMAIL
           ? getDraftId(actionResult)
           : null;
+      let receipt: InboxZeroDraftReceipt | undefined;
 
-      if (draftId) {
+      if (action.type === ActionType.DRAFT_EMAIL) {
+        const draftProposal = getDraftProposal(actionResult);
+        if (draftProposal) {
+          const validatedProposal = parseInboxZeroDraftProposal(draftProposal);
+          if (
+            validatedProposal.account_id !== emailAccount.id ||
+            validatedProposal.thread_id !== message.threadId ||
+            validatedProposal.source_message_id !== message.id
+          ) {
+            throw Object.assign(
+              new Error(
+                "Coastline draft proposal does not match the executing message",
+              ),
+              { code: "COASTLINE_DRAFT_PROPOSAL_CONTEXT_MISMATCH" },
+            );
+          }
+          log.info("Draft-only proposal passed execution validation", {
+            idempotencyKey: validatedProposal.idempotency_key,
+            sourceMessageId: validatedProposal.source_message_id,
+          });
+          receipt = getVerifiedDraftReceipt(actionResult);
+          if (
+            !draftId ||
+            !receipt ||
+            receipt.draftId !== draftId ||
+            receipt.idempotencyKey !== validatedProposal.idempotency_key ||
+            receipt.terminalState !== "created_verified" ||
+            !receipt.readBackAt
+          ) {
+            throw Object.assign(
+              new Error("Coastline draft did not return a verified receipt"),
+              { code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED" },
+            );
+          }
+        }
+      }
+
+      if (draftId && !receipt) {
         await updateExecutedActionWithDraftId({
           actionId: action.id,
           draftId,
           logger,
         });
-      } else if (action.type === ActionType.DRAFT_EMAIL) {
+      } else if (!draftId && action.type === ActionType.DRAFT_EMAIL) {
         log.warn("Draft action completed without a draft ID", {
           actionId: action.id,
         });
       }
+
+      await persistExecutedActionOutcome({
+        actionId: action.id,
+        status: ExecutedActionStatus.SUCCEEDED,
+        error: null,
+        logger: log,
+      });
     } catch (error) {
       await persistExecutedActionOutcome({
         actionId: action.id,
@@ -238,4 +306,33 @@ function getDraftId(actionResult: unknown): string | null {
   }
 
   return actionResult.draftId;
+}
+
+function getDraftProposal(actionResult: unknown): unknown | null {
+  if (
+    !actionResult ||
+    typeof actionResult !== "object" ||
+    !("draftProposal" in actionResult)
+  ) {
+    return null;
+  }
+
+  return actionResult.draftProposal ?? null;
+}
+
+function getVerifiedDraftReceipt(
+  actionResult: unknown,
+): InboxZeroDraftReceipt | undefined {
+  if (
+    !actionResult ||
+    typeof actionResult !== "object" ||
+    !("draftReceipt" in actionResult)
+  ) {
+    return;
+  }
+  try {
+    return parseInboxZeroDraftReceipt(actionResult.draftReceipt);
+  } catch {
+    return;
+  }
 }
