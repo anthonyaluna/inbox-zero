@@ -23,6 +23,7 @@ export type CreateCalendarEventInput = {
   endTime: Date;
   locationType: BookingLinkLocationType;
   locationValue?: string | null;
+  preserveTimezone?: boolean;
   startTime: Date;
   timezone: string;
   title: string;
