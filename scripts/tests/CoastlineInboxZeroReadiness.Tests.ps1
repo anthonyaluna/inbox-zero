@@ -448,7 +448,11 @@ Describe "Coastline Inbox Zero promotion readiness" {
     $readiness | Should Match "pilot-only"
     $contract | Should Match "COASTLINE_INBOX_ZERO_STAGING_BASE_URL"
     $contract | Should Match "coastline_inbox_zero_promotion_canary_evidence.v1"
+    $contract | Should Match "worker_artifact_sha"
+    $contract | Should Match "coastline_inbox_zero_rollback_receipt.v2"
     $contract | Should Match "check-client-redirects"
+    $readiness | Should Match "one current promotion nonce"
     $pilot | Should Match "environment protection"
+    $pilot | Should Match "deployed worker artifact and heartbeat"
   }
 }

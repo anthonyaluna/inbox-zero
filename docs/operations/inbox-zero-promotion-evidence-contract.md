@@ -99,8 +99,9 @@ secret and variable names above. `configured_variable_names` must contain exactl
 The remote verifier produces exact schema
 `coastline_inbox_zero_staging_receipt.v2`. Promotion requires
 `provenance: remote_https`, `is_loopback: false`, a fresh bounded and ordered
-start/completion window, a valid run nonce, the current artifact SHA, opaque
-remote worker and queue identities, the authenticated cron evidence ID, exact
+start/completion window, a valid run nonce, the current artifact SHA, a current
+`worker_artifact_sha`, a bounded `worker_heartbeat_at`, opaque remote worker and
+queue identities, the authenticated cron evidence ID, exact
 healthy service states, all four named checks passing, and `outcome: pass`.
 Loopback and local Docker receipts are marked `local_diagnostic`; the readiness
 checker rejects them even if their diagnostic checks pass.
@@ -125,6 +126,12 @@ ordered start/completion window. The exact nested records are:
   `created_verified`, and the same idempotency key, draft ID, replay evidence,
   no-duplicate evidence, and numeric draft count as the canary.
 
+The remote receipt's nonce, canary bundle nonce, replay nonce, and rollback
+nonce must be identical. The remote receipt must complete before the canary
+bundle begins; mailbox verification precedes canary readback, replay follows it,
+and rollback begins only after the bundle completes. The canary bundle's
+`run_id` also binds the rollback receipt and runner provenance.
+
 Truncated raw canary receipts, stale timestamps, mismatched run IDs/nonces,
 mismatched artifact identities, incomplete runner provenance, and unproved
 dedicated mailbox status are blocked evidence. A three-field fixture can never
@@ -132,9 +139,17 @@ produce `ready`.
 
 ### Rollback and pull-request review
 
-`coastline_inbox_zero_rollback_receipt.v1` is current-SHA evidence with
+`coastline_inbox_zero_rollback_receipt.v2` has exactly these properties:
+`schema_version`, `artifact_sha`, `run_id`, `run_nonce`, `started_at`,
+`completed_at`, `remote_staging_evidence_id`, `canary_evidence_id`,
+`replay_evidence_id`, `rollback_evidence_id`, `outcome`,
+`draft_action_unavailable`, `existing_draft_untouched`, and
+`no_mailbox_delete`. It is fresh current-artifact evidence for the same run,
+begins after the canary bundle completes, and cross-references the remote cron,
+canary Graph-readback, and replay Graph-readback evidence IDs. It must record
 `outcome: pass`, `draft_action_unavailable: true`,
-`existing_draft_untouched: true`, and `no_mailbox_delete: true`.
+`existing_draft_untouched: true`, and `no_mailbox_delete: true`. Legacy minimal
+or current-SHA-only rollback JSON is blocked evidence.
 
 `coastline_inbox_zero_pr_review_receipt.v1` is current-SHA evidence with
 `base_branch: main`, `review_state: approved`, and at least one approving

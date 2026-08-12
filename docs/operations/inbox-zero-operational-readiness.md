@@ -10,7 +10,7 @@ description: Evidence-bound promotion decision for Coastline's Microsoft draft-o
 **pilot-only**
 
 The current branch has reviewed local hardening through implementation evidence
-base `9e7b9d034147c538c3428e863d341d29f2e43767`, but no protected-environment
+base `4de132fb062606e0d0f9eed230757873a3ac939a`, but no protected-environment
 configuration receipt, remote staging receipt, dedicated-mailbox Graph canary,
 rollback receipt, or approved pull-request receipt is present. Nothing in this
 record authorizes a deployment, production mailbox, send action, delete action,
@@ -18,8 +18,8 @@ or promotion.
 
 The readiness checker binds every evaluation to the full SHA passed as
 `-ExpectedSha` and independently compares it with `git rev-parse HEAD`. This
-avoids a self-referential commit hash in the document while ensuring the emitted
-machine record names the exact current commit:
+avoids a self-referential document hash while ensuring the emitted machine
+record names the exact current commit:
 
 ```powershell
 pwsh -File scripts/Assert-CoastlineInboxZeroReadiness.ps1 `
@@ -45,23 +45,23 @@ repository.
 
 | Evidence | Current result | Stable reason when absent | Limitation |
 | --- | --- | --- | --- |
-| Current SHA | pass at evaluation time | `CURRENT_SHA_MISMATCH` | The checker emits the full current SHA; the implementation evidence base above is the last pre-Task-5 commit. |
-| Build | pass at `9e7b9d034` | `LOCAL_BUILD_RESULT_MISSING` | Task 4 ran `build:ci`; the final Task 5 current-SHA local receipt remains outside Git. |
-| Full unit suite | pending current-SHA receipt | `LOCAL_FULL_TEST_RESULT_MISSING` | No current sanitized receipt is committed. Exact counts must come from the final command output, never an older document. |
-| Integration suite | pending current-SHA receipt | `LOCAL_INTEGRATION_RESULT_MISSING` | No current sanitized receipt is committed. |
-| Pester suite | 42 passed, 0 failed | `LOCAL_PESTER_RESULT_MISSING` | Current Task 5 fix-round run on 2026-08-12; a post-commit current-SHA receipt still remains outside Git. |
+| Current SHA | pass at evaluation time | `CURRENT_SHA_MISMATCH` | The checker emits the exact final `HEAD`; the code evidence base above is the latest implementation commit before this documentation refresh. |
+| Build | pending final-HEAD receipt | `LOCAL_BUILD_RESULT_MISSING` | A fresh `build:ci` result belongs in the out-of-repository local receipt. |
+| Full unit suite | pending final-HEAD receipt | `LOCAL_FULL_TEST_RESULT_MISSING` | Exact counts must come from the final command output, never an older document. |
+| Integration suite | pending final-HEAD receipt | `LOCAL_INTEGRATION_RESULT_MISSING` | Exact counts must come from the final command output, never an older document. |
+| Pester suite | 32 focused readiness tests passed | `LOCAL_PESTER_RESULT_MISSING` | The focused result is not a full-suite promotion receipt; the final full-suite count remains pending. |
 | Server-action check | pending current-SHA receipt | `LOCAL_CHECK_SERVER_ACTIONS_RESULT_MISSING` | Required as its own matrix row. |
 | Client-redirect check | pending current-SHA receipt | `LOCAL_CHECK_CLIENT_REDIRECTS_RESULT_MISSING` | Required as its own matrix row. |
 | Test-fixture check | pending current-SHA receipt | `LOCAL_CHECK_TEST_FIXTURES_RESULT_MISSING` | Required as its own matrix row. |
 | Protected environment | missing | `PROTECTED_ENVIRONMENT_EVIDENCE_MISSING` | Workflow YAML cannot prove GitHub Environment reviewer or branch protection. |
-| Remote staging receipt | missing | `REMOTE_STAGING_RECEIPT_MISSING` | No remote endpoint was contacted. |
+| Remote staging receipt | missing | `REMOTE_STAGING_RECEIPT_MISSING` | No remote endpoint was contacted. A passing receipt must attest the current worker artifact and heartbeat. |
 | Dedicated mailbox | missing | `DEDICATED_MAILBOX_EVIDENCE_MISSING` | No mailbox identity was supplied or contacted. |
 | Graph canary receipt | missing | `GRAPH_CANARY_RECEIPT_MISSING` | Local mocks are not Graph read-after-write evidence. |
 | Same-key replay | missing | `REPLAY_RESULT_MISSING` | No independent exact-one-draft receipt exists. |
 | Rollback | missing | `ROLLBACK_RESULT_MISSING` | The staging flag was not changed and no deployment was rolled back. |
 | PR review | missing | `PR_REVIEW_MISSING` | No branch was pushed and no pull request was opened or reviewed. |
 
-The exact post-fix counts and all three named code-check results belong in the
+The exact final-HEAD counts and all three named code-check results belong in the
 sanitized local validation receipt
 defined by
 [`inbox-zero-promotion-evidence-contract.md`](inbox-zero-promotion-evidence-contract.md).
@@ -91,6 +91,10 @@ do not establish or replace it.
 - Tasks 1–4 remain draft-only, no-send, and no-delete. Their durable marker
   recovery, recipient-bucket validation, mutation/scope gates, and remote
   evidence endpoint are unchanged.
+- Any supplied remote staging, canary, replay, and rollback receipt must use
+  one current promotion nonce. Their fresh timestamps must be ordered from
+  remote staging through canary/replay and then rollback. A legacy
+  current-SHA-only rollback record is blocked evidence.
 
 ## Next safe action
 
