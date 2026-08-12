@@ -9,6 +9,11 @@ import { withEmailAccount } from "@/utils/middleware";
 import { aiPromptToRules } from "@/utils/ai/rule/prompt-to-rules";
 import { getEmailAccountWithAi } from "@/utils/user/get";
 import { toCreateRuleBodyFromAiRule } from "@/utils/rule/mobile-rule";
+import { env } from "@/env";
+import {
+  assertCoastlineMutationAllowed,
+  CoastlineDraftOnlyPolicyError,
+} from "@/utils/coastline/draft-only-policy";
 
 export const maxDuration = 120;
 
@@ -23,7 +28,7 @@ const bodySchema = z.discriminatedUnion("source", [
   }),
 ]);
 
-export const POST = withEmailAccount("mobile/rules/create", async (request) => {
+const createRulePost = withEmailAccount("mobile/rules/create", async (request) => {
   const body = bodySchema.parse(await request.json());
   const emailAccountId = request.auth.emailAccountId;
 
@@ -66,3 +71,23 @@ export const POST = withEmailAccount("mobile/rules/create", async (request) => {
 
   return NextResponse.json({ rule: result.data.rule }, { status: 201 });
 });
+
+export const POST: typeof createRulePost = async (request, context) => {
+  try {
+    assertCoastlineMutationAllowed({
+      surface: "mobile/rules/create",
+      mutation: "CREATE_RULE",
+      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    });
+  } catch (error) {
+    if (error instanceof CoastlineDraftOnlyPolicyError) {
+      return NextResponse.json(
+        { error: error.message, errorCode: error.code, isKnownError: true },
+        { status: 400 },
+      );
+    }
+    throw error;
+  }
+
+  return createRulePost(request, context);
+};

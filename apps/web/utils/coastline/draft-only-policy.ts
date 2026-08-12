@@ -6,11 +6,27 @@ export const COASTLINE_DRAFT_ONLY_POLICY_CODE =
 export class CoastlineDraftOnlyPolicyError extends Error {
   readonly code = COASTLINE_DRAFT_ONLY_POLICY_CODE;
   readonly actionType: string;
+  readonly surface?: string;
 
-  constructor(actionType: string) {
+  constructor(actionType: string, surface?: string) {
     super(`Coastline draft-only policy blocked ${actionType}`);
     this.name = "CoastlineDraftOnlyPolicyError";
     this.actionType = actionType;
+    this.surface = surface;
+  }
+}
+
+export function assertCoastlineMutationAllowed({
+  surface,
+  mutation,
+  coastlineDraftProposalsEnabled,
+}: {
+  surface: string;
+  mutation: string;
+  coastlineDraftProposalsEnabled: boolean;
+}): void {
+  if (coastlineDraftProposalsEnabled) {
+    throw new CoastlineDraftOnlyPolicyError(mutation, surface);
   }
 }
 
@@ -43,7 +59,9 @@ export function assertCoastlineServerActionAllowed({
   actionName: string;
   coastlineDraftProposalsEnabled: boolean;
 }) {
-  if (coastlineDraftProposalsEnabled) {
-    throw new CoastlineDraftOnlyPolicyError(actionName);
-  }
+  assertCoastlineMutationAllowed({
+    surface: "server-action",
+    mutation: actionName,
+    coastlineDraftProposalsEnabled,
+  });
 }

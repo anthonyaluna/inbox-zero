@@ -84,6 +84,18 @@ function Test-EmulatorUrl {
   return $providerHost -in @("localhost", "127.0.0.1", "::1", "microsoft-emulator")
 }
 
+function Get-ExactMicrosoftScopes {
+  param([string]$Value)
+
+  $expected = @("Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
+  [string[]]$configured = @($Value -split '[,\s]+' | Where-Object { $_ })
+  [Array]::Sort($configured, [StringComparer]::Ordinal)
+  if (($configured -join "|") -cne ($expected -join "|")) {
+    return $null
+  }
+  return $configured
+}
+
 function Get-ServiceContainerId {
   param([string]$Service)
 
@@ -200,9 +212,10 @@ if ($values.ContainsKey("MICROSOFT_BASE_URL") -and
   $failures.Add("microsoft_provider")
 }
 
-$expectedScopes = @("openid", "profile", "email", "User.Read", "offline_access", "Mail.ReadWrite") | Sort-Object
-$configuredScopes = @($values["COASTLINE_MICROSOFT_ALLOWED_SCOPES"] -split '[,\s]+' | Where-Object { $_ }) | Sort-Object
-if (($configuredScopes -join "|") -ceq ($expectedScopes -join "|")) {
+$configuredScopes = @(if ($values.ContainsKey("COASTLINE_MICROSOFT_ALLOWED_SCOPES")) {
+    Get-ExactMicrosoftScopes -Value $values["COASTLINE_MICROSOFT_ALLOWED_SCOPES"]
+  })
+if ($configuredScopes.Count -eq 6) {
   $checks["microsoft_allowed_scopes"] = "exact"
 } else {
   $checks["microsoft_allowed_scopes"] = "mismatch"

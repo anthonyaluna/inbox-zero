@@ -23,6 +23,41 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
     }
   }
 
+  It "rejects a duplicate scope before invoking the protected executor or verifier" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-scopes-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    $environment = @{
+      COASTLINE_STAGING_BASE_URL = "https://staging.example.test"
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH = (Join-Path $testRoot "registration.json")
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_SHA256 = ("a" * 64)
+      COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN = "test-auth-token"
+      COASTLINE_MICROSOFT_CANARY_MAILBOX = "canary-mailbox@testing.example"
+      COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID = "test-account"
+      COASTLINE_MICROSOFT_CANARY_THREAD_ID = "test-thread"
+      COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = "test-message"
+      COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = "canary@testing.example"
+      COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite"
+      COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $testRoot
+      COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
+      NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"
+    }
+    try {
+      foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
+      $script:restCalls = 0
+      function Invoke-RestMethod { $script:restCalls++ }
+
+      $failure = $null
+      try { . $scriptPath -BaseUrl $environment.COASTLINE_STAGING_BASE_URL -SourceMessageId $environment.COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID -TestRecipient $environment.COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT } catch { $failure = $_ }
+
+      ($failure | Out-String) | Should Match "COASTLINE_CANARY_MICROSOFT_SCOPES_MISMATCH"
+      $script:restCalls | Should Be 0
+    } finally {
+      Remove-Item Function:Invoke-RestMethod -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
   It "persists a verified receipt when independent no-duplicate evidence attests numeric count one" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-canary-$([Guid]::NewGuid().ToString('N'))"
     $registrationPath = Join-Path $testRoot "executor-registration.json"
@@ -35,7 +70,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
     $sourceMessageId = "test-message"
     $mailbox = "canary-mailbox@testing.example"
     $recipient = "canary@testing.example"
-    $scopeIdentity = "delegated:Mail.ReadWrite,User.Read"
+    $scopeIdentity = "delegated:Mail.ReadWrite,User.Read,email,offline_access,openid,profile"
     $idempotencyKey = "inbox-zero/draft/test-account/test-thread/test-message"
     $observedAt = [DateTimeOffset]::UtcNow.ToString("o")
     $registration = [ordered]@{
@@ -66,7 +101,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       COASTLINE_MICROSOFT_CANARY_SOURCE_MESSAGE_ID = $sourceMessageId
       COASTLINE_MICROSOFT_CANARY_TEST_RECIPIENT = $recipient
       COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY = $scopeIdentity
-      COASTLINE_MICROSOFT_CANARY_SCOPES = "Mail.ReadWrite User.Read"
+      COASTLINE_MICROSOFT_CANARY_SCOPES = "openid profile email User.Read offline_access Mail.ReadWrite"
       COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR = $receiptDirectory
       COASTLINE_DRAFT_PROPOSALS_ENABLED = "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED = "false"

@@ -12,6 +12,7 @@ import {
   getMicrosoftOauthAuthorizeUrl,
   requestMicrosoftToken,
 } from "@/utils/microsoft/oauth";
+import { parseExactMicrosoftScopes } from "@/utils/outlook/scopes";
 
 vi.mock("@microsoft/microsoft-graph-client", () => ({
   Client: {
@@ -52,6 +53,7 @@ vi.mock("@/env", () => ({
     MICROSOFT_TENANT_ID: "common",
     NEXT_PUBLIC_BASE_URL: "http://localhost:3000",
     NEXT_PUBLIC_EMAIL_SEND_ENABLED: false,
+    COASTLINE_DRAFT_PROPOSALS_ENABLED: true,
   },
 }));
 
@@ -93,7 +95,7 @@ describe("outlook client emulator configuration", () => {
     );
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("scope")).toBe(
-      "openid profile email User.Read offline_access Mail.ReadWrite",
+      "Mail.ReadWrite User.Read email offline_access openid profile",
     );
     expect(getMicrosoftOauthAuthorizeUrl).toHaveBeenCalledWith();
   });
@@ -126,6 +128,34 @@ describe("outlook client emulator configuration", () => {
           access_token: "new-access-token",
         }),
       }),
+    );
+  });
+});
+
+describe("parseExactMicrosoftScopes", () => {
+  it("returns the one approved scope set in sorted order", () => {
+    expect(
+      parseExactMicrosoftScopes(
+        "profile,Mail.ReadWrite openid offline_access email User.Read",
+      ),
+    ).toEqual([
+      "Mail.ReadWrite",
+      "User.Read",
+      "email",
+      "offline_access",
+      "openid",
+      "profile",
+    ]);
+  });
+
+  it.each([
+    "openid profile email User.Read offline_access",
+    "openid profile email User.Read offline_access Mail.ReadWrite MailboxSettings.ReadWrite",
+    "openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite",
+    "openid profile email User.Read offline_access Mail.ReadWrite Mail.Send",
+  ])("rejects a non-exact Microsoft scope set: %s", (value) => {
+    expect(() => parseExactMicrosoftScopes(value)).toThrow(
+      "Microsoft scopes must exactly match the Coastline draft-only allowlist",
     );
   });
 });

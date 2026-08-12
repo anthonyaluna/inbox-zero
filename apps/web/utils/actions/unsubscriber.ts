@@ -12,7 +12,7 @@ import {
 } from "@/utils/senders/unsubscribe";
 
 export const setSenderStatusAction = actionClient
-  .metadata({ name: "setSenderStatus" })
+  .metadata({ name: "setSenderStatus", mutation: "SET_SENDER_STATUS" })
   .inputSchema(setSenderStatusBody)
   .action(
     async ({
@@ -37,7 +37,7 @@ export const setSenderStatusAction = actionClient
   );
 
 export const unsubscribeSenderAction = actionClient
-  .metadata({ name: "unsubscribeSender" })
+  .metadata({ name: "unsubscribeSender", mutation: "UNSUBSCRIBE" })
   .inputSchema(unsubscribeSenderBody)
   .action(
     async ({

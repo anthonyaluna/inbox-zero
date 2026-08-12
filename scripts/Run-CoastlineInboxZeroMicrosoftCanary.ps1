@@ -49,6 +49,18 @@ function Get-IdempotencyKey {
     ForEach-Object { [Uri]::EscapeDataString($_) }) -join "/"
 }
 
+function Get-ExactMicrosoftScopes {
+  param([string]$Value)
+
+  $expected = @("Mail.ReadWrite", "User.Read", "email", "offline_access", "openid", "profile")
+  [string[]]$configured = @($Value -split '[,\s]+' | Where-Object { $_ })
+  [Array]::Sort($configured, [StringComparer]::Ordinal)
+  if (($configured -join "|") -cne ($expected -join "|")) {
+    return $null
+  }
+  return $configured
+}
+
 function Test-ExactHttpsUrl {
   param([string]$Value, [string]$Expected)
   $actualUri = $null
@@ -165,9 +177,10 @@ if ($values.COASTLINE_MICROSOFT_CANARY_MAILBOX -notmatch '^[^\s@]+@[^\s@]+\.[^\s
 if ($values.COASTLINE_DRAFT_PROPOSALS_ENABLED -cne "true" -or $values.NEXT_PUBLIC_EMAIL_SEND_ENABLED -cne "false") {
   Stop-Canary -Code "COASTLINE_CANARY_DRAFT_ONLY_POLICY_UNVERIFIED" -Message "Draft-only staging policy is not enabled with sending disabled."
 }
-$scopes = @($values.COASTLINE_MICROSOFT_CANARY_SCOPES -split '[,\s]+' | Where-Object { $_ })
-if ($scopes -contains "Mail.Send") {
-  Stop-Canary -Code "COASTLINE_CANARY_MAIL_SEND_SCOPE_PRESENT" -Message "Protected Microsoft scopes include Mail.Send."
+$scopes = @(Get-ExactMicrosoftScopes -Value $values.COASTLINE_MICROSOFT_CANARY_SCOPES)
+$expectedScopeIdentity = "delegated:$($scopes -join ',')"
+if ($scopes.Count -ne 6 -or $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY -cne $expectedScopeIdentity) {
+  Stop-Canary -Code "COASTLINE_CANARY_MICROSOFT_SCOPES_MISMATCH" -Message "Protected Microsoft scopes and connected identity must exactly match the draft-only allowlist."
 }
 
 $registrationPath = $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH

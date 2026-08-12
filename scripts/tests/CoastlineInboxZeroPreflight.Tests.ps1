@@ -41,6 +41,31 @@ Describe "Coastline Inbox Zero preflight" {
       Remove-Item -LiteralPath $environmentFile -ErrorAction SilentlyContinue
     }
   }
+
+  It "rejects duplicate Microsoft scopes even when the unique set matches the allowlist" {
+    $environmentFile = New-TemporaryFile
+    try {
+      @(
+        "DATABASE_URL=postgresql://postgres:password@db:5432/inboxzero"
+        "AUTH_SECRET=auth-secret"
+        "MICROSOFT_CLIENT_ID=client-id"
+        "MICROSOFT_CLIENT_SECRET=microsoft-secret"
+        "NEXT_PUBLIC_BASE_URL=https://staging.example.test"
+        "MICROSOFT_BASE_URL=http://microsoft-emulator:4003"
+        "QUEUE_BACKEND=internal"
+        "CRON_SECRET=cron-secret"
+        "COASTLINE_DRAFT_PROPOSALS_ENABLED=true"
+        "NEXT_PUBLIC_EMAIL_SEND_ENABLED=false"
+        "COASTLINE_MICROSOFT_ALLOWED_SCOPES=openid profile email User.Read offline_access Mail.ReadWrite Mail.ReadWrite"
+      ) | Set-Content -LiteralPath $environmentFile
+
+      $output = & pwsh -NoProfile -Command "& '$($scriptPath.Replace("'", "''"))' -Mode Local -EnvironmentFile '$environmentFile'" 2>&1
+      $LASTEXITCODE | Should Be 1
+      ($output | Out-String) | Should Match "microsoft_allowed_scopes=mismatch"
+    } finally {
+      Remove-Item -LiteralPath $environmentFile -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 Describe "Coastline Inbox Zero staging verification" {

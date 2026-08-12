@@ -3,6 +3,7 @@ import { ActionType } from "@/generated/prisma/enums";
 import {
   CoastlineDraftOnlyPolicyError,
   assertCoastlineDraftOnlyAction,
+  assertCoastlineMutationAllowed,
   assertCoastlineServerActionAllowed,
 } from "@/utils/coastline/draft-only-policy";
 
@@ -98,6 +99,33 @@ describe("assertCoastlineServerActionAllowed", () => {
     expect(() =>
       assertCoastlineServerActionAllowed({
         actionName: "createRule",
+        coastlineDraftProposalsEnabled: false,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("assertCoastlineMutationAllowed", () => {
+  it("rejects a direct route mutation with the stable policy error in Coastline mode", () => {
+    expect(() =>
+      assertCoastlineMutationAllowed({
+        surface: "mobile/rules/create",
+        mutation: "CREATE_RULE",
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+        actionType: "CREATE_RULE",
+      }),
+    );
+  });
+
+  it("preserves direct mutations outside Coastline mode", () => {
+    expect(() =>
+      assertCoastlineMutationAllowed({
+        surface: "mobile/rules/create",
+        mutation: "CREATE_RULE",
         coastlineDraftProposalsEnabled: false,
       }),
     ).not.toThrow();
