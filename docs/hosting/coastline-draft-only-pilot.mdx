@@ -32,8 +32,9 @@ rollback path, and terminal readback.
 
 ## Staging contract
 
-Set the following protected environment values in staging; never commit their
-values or put them in a CI workflow. `MICROSOFT_BASE_URL` must resolve to
+Use the protected GitHub environment `coastline-inbox-zero-staging` and bind
+the following variable names in the deployment; never commit their values.
+`MICROSOFT_BASE_URL` must resolve to
 `localhost` or the `microsoft-emulator` Docker service, not Microsoft Graph.
 `NEXT_PUBLIC_BASE_URL` is the staging origin; register
 `${NEXT_PUBLIC_BASE_URL}/api/outlook/linking/callback` as the Microsoft OAuth
@@ -46,6 +47,9 @@ MICROSOFT_CLIENT_ID=<staging emulator client ID>
 MICROSOFT_CLIENT_SECRET=<protected staging emulator client secret>
 NEXT_PUBLIC_BASE_URL=https://inbox-zero-staging.example.test
 COASTLINE_STAGING_BASE_URL=https://inbox-zero-staging.example.test
+COASTLINE_STAGING_ARTIFACT_SHA=<protected approved 40-character SHA>
+COASTLINE_DEPLOYED_ARTIFACT_SHA=<immutable SHA injected by the deployer>
+COASTLINE_STAGING_QUEUE_NAME=<deployed BullMQ queue name>
 MICROSOFT_BASE_URL=http://microsoft-emulator:4003
 QUEUE_BACKEND=bullmq
 REDIS_URL=redis://redis:6379
@@ -64,6 +68,14 @@ match `-BaseUrl` for non-loopback verification. A hostname containing words
 such as `staging`, `test`, or `emulator` is not evidence that an endpoint is
 safe. Loopback is the only implicit local exception.
 
+`COASTLINE_STAGING_ARTIFACT_SHA` is the approved SHA protected by the GitHub
+environment. `COASTLINE_DEPLOYED_ARTIFACT_SHA` must come from immutable
+deployment metadata, not a request or local Git checkout, and must match it.
+The evidence endpoint reads worker identity from the active BullMQ worker
+registration for `COASTLINE_STAGING_QUEUE_NAME`; it derives queue identity from
+that deployed queue and proves reachability through its Redis client. The
+connection string and worker registration details are never returned.
+
 From the staging host, run the preflight before releasing an artifact:
 
 ```powershell
@@ -79,10 +91,14 @@ pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
   -OutputPath C:\staging-receipts\inbox-zero-staging.json
 ```
 
-The verification call performs an unauthenticated cron request and requires a
-`401` response. It never sends `CRON_SECRET`, so it cannot run a cron action.
-Require the protected `Coastline staging preflight` workflow to pass before
-publishing a staging artifact.
+The verifier first performs an unauthenticated cron request and requires a
+`401` response, then uses `CRON_SECRET` only for authenticated probes. It
+requires `/api/coastline/staging-evidence` to return the current timestamped
+nonce, protected artifact SHA, matching cron evidence ID, a running registered
+worker, and a reachable deployed queue. A missing endpoint, mismatch, stale
+nonce, or unavailable runtime produces a failed receipt. A loopback, local
+Docker, or emulator pass is local diagnostic evidence only and is never a
+staging pass.
 
 ## Windows Omen startup
 

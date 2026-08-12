@@ -35,7 +35,8 @@ if ($protectedSha -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($c
 }
 
 $started = [DateTimeOffset]::UtcNow
-$runNonce = [Guid]::NewGuid().ToString("N")
+$nonceEntropy = [Guid]::NewGuid().ToString("N").Substring(0, 20)
+$runNonce = $started.ToUnixTimeMilliseconds().ToString("x12") + $nonceEntropy
 $base = $BaseUrl.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
 $checks = [System.Collections.Generic.List[object]]::new()
 $services = [ordered]@{ web = "unverified"; worker = "unverified"; queue = "unverified"; cron_unauthenticated = "unverified"; cron_authenticated = "unverified" }
@@ -71,6 +72,7 @@ try {
   $cron = Invoke-WebRequest -Uri "$base/api/cron/scheduled-actions?coastline_probe=$runNonce" -Method Get -Headers @{ Authorization = "Bearer $cronSecret" } -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
   $cronBody = $cron.Content | ConvertFrom-Json
   if ($cron.StatusCode -ne 200 -or $cronBody.authenticated -ne $true -or $cronBody.runNonce -cne $runNonce -or
+    $cronBody.evidenceId -notmatch '^[a-f0-9]{64}$' -or
     -not (Test-BoundedTimestamp $cronBody.observedAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid cron proof" }
   $cronEvidenceId = [string]$cronBody.evidenceId
   $services.cron_authenticated = "verified"

@@ -118,9 +118,9 @@ Describe "Coastline Inbox Zero staging verification" {
             } elseif ($requestNumber -eq 2) {
               $status = "401 Unauthorized"; $body = 'Unauthorized'
             } elseif ($requestNumber -eq 3) {
-              $status = "200 OK"; $body = (@{ authenticated = $true; runNonce = $nonce; evidenceId = "cron-evidence"; observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
+              $status = "200 OK"; $body = (@{ authenticated = $true; runNonce = $nonce; evidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
             } else {
-              $status = "200 OK"; $body = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("1" * 40); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = "cron-evidence"; observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
+              $status = "200 OK"; $body = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("1" * 40); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
             }
             $bytes = [Text.Encoding]::UTF8.GetBytes($body)
             $head = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
@@ -139,6 +139,12 @@ Describe "Coastline Inbox Zero staging verification" {
       $receipt = $receiptText | ConvertFrom-Json
       if ($failure) { $serverLog = Receive-Job $serverJob -Keep 2>&1 | Out-String; throw "Verification failed: $failure Server: $serverLog Receipt: $receiptText" }
       $receipt.schema_version | Should Be "coastline_inbox_zero_staging_receipt.v2"
+      $nonceIssuedAt = [DateTimeOffset]::FromUnixTimeMilliseconds(
+        [Convert]::ToInt64($receipt.run_nonce.Substring(0, 12), 16)
+      )
+      $nonceAgeMinutes = ([DateTimeOffset]::UtcNow - $nonceIssuedAt).TotalMinutes
+      $nonceAgeMinutes | Should BeGreaterThan -1
+      $nonceAgeMinutes | Should BeLessThan 5
       $receipt.artifact_sha | Should Be $artifactSha
       $receipt.remote_worker_identity | Should Be "remote-worker-1"
       $receipt.remote_queue_identity | Should Be "remote-queue-1"
@@ -149,6 +155,49 @@ Describe "Coastline Inbox Zero staging verification" {
     } finally {
       Stop-Job $serverJob -ErrorAction SilentlyContinue
       Remove-Job $serverJob -Force -ErrorAction SilentlyContinue
+      $env:COASTLINE_STAGING_ARTIFACT_SHA = $priorSha
+      $env:CRON_SECRET = $priorSecret
+      Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  It "writes a failed receipt when remote evidence does not match the protected SHA" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-staging-$([Guid]::NewGuid().ToString('N'))"
+    $outputPath = Join-Path $testRoot "receipt.json"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    $priorSha = $env:COASTLINE_STAGING_ARTIFACT_SHA
+    $priorSecret = $env:CRON_SECRET
+    try {
+      $env:COASTLINE_STAGING_ARTIFACT_SHA = "1" * 40
+      $env:CRON_SECRET = "secret-sentinel"
+      Mock Invoke-WebRequest {
+        param($Uri, $Method, $Headers)
+        $target = [string]$Uri
+        $nonce = ([Uri]$target).Query.TrimStart("?").Split("&") |
+          Where-Object { $_ -match "^(?:coastline_probe|run_nonce)=" } |
+          Select-Object -First 1
+        $nonce = $nonce -replace "^[^=]+=", ""
+        if ($target -like "*/api/health") {
+          return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ok"}' }
+        }
+        if ($target -like "*/api/cron/*" -and -not $Headers) {
+          return [pscustomobject]@{ StatusCode = 401; Content = "Unauthorized" }
+        }
+        if ($target -like "*/api/cron/*") {
+          return [pscustomobject]@{ StatusCode = 200; Content = (@{ authenticated = $true; runNonce = $nonce; evidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress) }
+        }
+        return [pscustomobject]@{ StatusCode = 200; Content = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("2" * 40); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress) }
+      }
+
+      $failure = $null
+      try { . $verificationScriptPath -BaseUrl "http://127.0.0.1:45678" -OutputPath $outputPath | Out-Null } catch { $failure = $_ }
+
+      ($failure | Out-String) | Should Match "remote staging verification failed"
+      $receipt = Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json
+      $receipt.outcome | Should Be "fail"
+      $receipt.artifact_sha | Should BeNullOrEmpty
+      @($receipt.checks | Where-Object code -eq "REMOTE_ARTIFACT_WORKER_QUEUE").status | Should Be "fail"
+    } finally {
       $env:COASTLINE_STAGING_ARTIFACT_SHA = $priorSha
       $env:CRON_SECRET = $priorSecret
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue

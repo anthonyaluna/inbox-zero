@@ -107,3 +107,22 @@ jobs:
       - name: Run local-only Coastline staging configuration preflight
         shell: pwsh
         run: ./scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
+
+  remote-staging-evidence:
+    needs: [ref-guard, quality, preflight]
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+    runs-on: ubuntu-latest
+    environment: coastline-inbox-zero-staging
+    env:
+      COASTLINE_STAGING_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_BASE_URL }}
+      COASTLINE_STAGING_ARTIFACT_SHA: ${{ vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
+      CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require nonce-bound evidence from the deployed artifact
+        shell: pwsh
+        run: >-
+          ./scripts/Verify-CoastlineInboxZeroStaging.ps1
+          -BaseUrl $env:COASTLINE_STAGING_BASE_URL
