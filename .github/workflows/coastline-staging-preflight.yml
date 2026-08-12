@@ -87,7 +87,6 @@ jobs:
       MICROSOFT_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL }}
       QUEUE_BACKEND: bullmq
       REDIS_URL: redis://redis:6379
-      CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
       COASTLINE_DRAFT_PROPOSALS_ENABLED: "true"
       NEXT_PUBLIC_EMAIL_SEND_ENABLED: "false"
       COASTLINE_MICROSOFT_ALLOWED_SCOPES: "openid profile email User.Read offline_access Mail.ReadWrite"
@@ -106,6 +105,8 @@ jobs:
 
       - name: Run local-only Coastline staging configuration preflight
         shell: pwsh
+        env:
+          CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
         run: ./scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
 
   remote-staging-evidence:
@@ -116,13 +117,14 @@ jobs:
     env:
       COASTLINE_STAGING_BASE_URL: ${{ vars.COASTLINE_INBOX_ZERO_STAGING_BASE_URL }}
       COASTLINE_STAGING_ARTIFACT_SHA: ${{ vars.COASTLINE_INBOX_ZERO_PROTECTED_SHA }}
-      CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Require nonce-bound evidence from the deployed artifact
         shell: pwsh
+        env:
+          CRON_SECRET: ${{ secrets.COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET }}
         run: >-
           ./scripts/Verify-CoastlineInboxZeroStaging.ps1
           -BaseUrl $env:COASTLINE_STAGING_BASE_URL

@@ -3,18 +3,33 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import { env } from "@/env";
 
 const SCHEMA_VERSION =
   "coastline_inbox_zero_remote_staging_evidence.v1" as const;
 const NONCE_MAX_AGE_MS = 5 * 60_000;
 const NONCE_FUTURE_TOLERANCE_MS = 30_000;
+const DEFAULT_RUNTIME_TIMEOUT_MS = 5000;
+
+type CoastlineWorkerRegistration = {
+  identity: string;
+  queueIdentity: string;
+  status: "running" | "stopped";
+};
+
+type CoastlineQueueRuntime = {
+  queueName: string;
+  waitUntilReady: () => Promise<unknown>;
+  getWorkers: () => Promise<Array<{ name?: string }>>;
+  close: () => Promise<void>;
+};
 
 export type CoastlineStagingRuntimeBinding = {
   deployedArtifactSha: string | undefined;
   protectedArtifactSha: string | undefined;
   queueIdentity: string;
   queueReachable: boolean;
-  workerRegistrations: Array<{ name?: string }>;
+  workerRegistrations: CoastlineWorkerRegistration[];
 };
 
 export class CoastlineStagingEvidenceError extends Error {
@@ -108,8 +123,13 @@ export function createCoastlineRemoteStagingEvidence({
   }
 
   const workerIdentity = workerRegistrations
-    .map((registration) => registration.name?.trim())
-    .filter((name): name is string => Boolean(name))
+    .filter(
+      (registration) =>
+        registration.queueIdentity === queueIdentity &&
+        registration.status === "running" &&
+        isQueueWorkerIdentity(registration.identity, queueIdentity),
+    )
+    .map((registration) => registration.identity)
     .sort()[0];
   if (!workerIdentity) {
     throw new CoastlineStagingEvidenceError(
@@ -131,32 +151,121 @@ export function createCoastlineRemoteStagingEvidence({
   };
 }
 
-export async function readCoastlineStagingRuntimeBinding(): Promise<CoastlineStagingRuntimeBinding> {
-  const queueName = process.env.COASTLINE_STAGING_QUEUE_NAME;
-  const redisUrl = process.env.REDIS_URL;
-  if (!queueName || !redisUrl) {
+function isQueueWorkerIdentity(identity: string, queueIdentity: string) {
+  const queueName = queueIdentity.startsWith("bullmq:")
+    ? queueIdentity.slice("bullmq:".length)
+    : "";
+  const prefix = `bull:${Buffer.from(queueName).toString("base64")}:w:`;
+  return (
+    Boolean(queueName) &&
+    identity.startsWith(prefix) &&
+    identity.length > prefix.length
+  );
+}
+
+export async function readCoastlineStagingRuntimeBinding({
+  queueName = env.COASTLINE_STAGING_QUEUE_NAME,
+  protectedArtifactSha = env.COASTLINE_STAGING_ARTIFACT_SHA,
+  deployedArtifactSha = env.COASTLINE_DEPLOYED_ARTIFACT_SHA,
+  timeoutMs = DEFAULT_RUNTIME_TIMEOUT_MS,
+  createQueueRuntime = createBullMqRuntime,
+}: {
+  queueName?: string;
+  protectedArtifactSha?: string;
+  deployedArtifactSha?: string;
+  timeoutMs?: number;
+  createQueueRuntime?: (queueName: string) => CoastlineQueueRuntime;
+} = {}): Promise<CoastlineStagingRuntimeBinding> {
+  if (!queueName) {
     throw new CoastlineStagingEvidenceError(
       "COASTLINE_STAGING_QUEUE_UNREACHABLE",
       503,
     );
   }
 
-  const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
-  const queue = new Queue(queueName, { connection });
+  const queue = createQueueRuntime(queueName);
   try {
-    await queue.waitUntilReady();
-    const queueReachable = true;
-    const workerRegistrations = await queue.getWorkers();
+    const workerClients = await withRuntimeTimeout(async () => {
+      await queue.waitUntilReady();
+      return queue.getWorkers();
+    }, timeoutMs);
+    const queueIdentity = `bullmq:${queue.queueName}`;
+    const expectedClientPrefix = `bull:${Buffer.from(queue.queueName).toString("base64")}:w:`;
+    const workerRegistrations = workerClients
+      .map((registration) => registration.name?.trim())
+      .filter(
+        (identity): identity is string =>
+          typeof identity === "string" &&
+          identity.startsWith(expectedClientPrefix) &&
+          identity.length > expectedClientPrefix.length,
+      )
+      .map((identity) => ({
+        identity,
+        queueIdentity,
+        status: "running" as const,
+      }));
 
     return {
-      protectedArtifactSha: process.env.COASTLINE_STAGING_ARTIFACT_SHA,
-      deployedArtifactSha: process.env.COASTLINE_DEPLOYED_ARTIFACT_SHA,
-      queueIdentity: `bullmq:${queue.name}`,
-      queueReachable,
+      protectedArtifactSha,
+      deployedArtifactSha,
+      queueIdentity,
+      queueReachable: true,
       workerRegistrations,
     };
+  } catch {
+    throw new CoastlineStagingEvidenceError(
+      "COASTLINE_STAGING_QUEUE_UNREACHABLE",
+      503,
+    );
   } finally {
     await queue.close();
-    if (connection.status !== "end") await connection.quit();
+  }
+}
+
+function createBullMqRuntime(queueName: string): CoastlineQueueRuntime {
+  if (!env.REDIS_URL) {
+    throw new CoastlineStagingEvidenceError(
+      "COASTLINE_STAGING_QUEUE_UNREACHABLE",
+      503,
+    );
+  }
+
+  const connection = new IORedis(env.REDIS_URL, {
+    connectTimeout: DEFAULT_RUNTIME_TIMEOUT_MS,
+    commandTimeout: DEFAULT_RUNTIME_TIMEOUT_MS,
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 0,
+    retryStrategy: () => null,
+  });
+  const queue = new Queue(queueName, { connection });
+
+  return {
+    queueName: queue.name,
+    waitUntilReady: () => queue.waitUntilReady(),
+    getWorkers: () => queue.getWorkers(),
+    close: async () => {
+      await queue.close();
+      if (connection.status !== "end") connection.disconnect();
+    },
+  };
+}
+
+async function withRuntimeTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Coastline staging runtime timed out")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }

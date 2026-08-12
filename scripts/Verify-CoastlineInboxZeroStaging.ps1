@@ -12,6 +12,7 @@ function Test-SafeStagingUrl {
   if ($Url.Scheme -notin @("http", "https") -or $Url.UserInfo -or $Url.Query -or
     $Url.Fragment -or $Url.AbsolutePath -ne "/") { return $false }
   if ($Url.Host.ToLowerInvariant() -in @("localhost", "127.0.0.1", "::1")) { return $true }
+  if ($Url.Scheme -ne "https") { return $false }
   $protected = $null
   $value = [Environment]::GetEnvironmentVariable("COASTLINE_STAGING_BASE_URL")
   return [Uri]::TryCreate($value, [UriKind]::Absolute, [ref]$protected) -and

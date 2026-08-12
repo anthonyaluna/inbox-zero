@@ -81,6 +81,18 @@ Describe "Coastline Inbox Zero staging verification" {
     }
   }
 
+  It "rejects an exact protected non-loopback origin unless it uses HTTPS" {
+    $prior = $env:COASTLINE_STAGING_BASE_URL
+    try {
+      $env:COASTLINE_STAGING_BASE_URL = "http://approved-staging.example.test"
+      $caught = $null
+      try { . $verificationScriptPath -BaseUrl "http://approved-staging.example.test" } catch { $caught = $_ }
+      ($caught | Out-String) | Should Match "BaseUrl must be"
+    } finally {
+      $env:COASTLINE_STAGING_BASE_URL = $prior
+    }
+  }
+
   It "binds the receipt only to remote artifact, worker, queue, and authenticated cron evidence" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-staging-$([Guid]::NewGuid().ToString('N'))"
     $outputPath = Join-Path $testRoot "receipt.json"

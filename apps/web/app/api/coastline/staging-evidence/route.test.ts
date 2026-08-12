@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createCoastlineStagingRunNonce } from "@/utils/coastline/staging-evidence";
+import {
+  CoastlineStagingEvidenceError,
+  createCoastlineStagingRunNonce,
+} from "@/utils/coastline/staging-evidence";
 
 const envMock = vi.hoisted(() => ({ CRON_SECRET: "cron-secret" }));
 
@@ -62,7 +65,7 @@ describe("GET /api/coastline/staging-evidence", () => {
     const readRuntimeEvidence = vi.fn().mockResolvedValue({
       protectedArtifactSha: "1".repeat(40),
       deployedArtifactSha: "1".repeat(40),
-      workerRegistrations: [{ name: "bull:automation-jobs:w:worker-1" }],
+      workerRegistrations: [runningWorker()],
       queueIdentity: "bullmq:automation-jobs",
       queueReachable: true,
     });
@@ -89,7 +92,7 @@ describe("GET /api/coastline/staging-evidence", () => {
       queueIdentity: "bullmq:automation-jobs",
       queueStatus: "reachable",
       runNonce: RUN_NONCE,
-      workerIdentity: "bull:automation-jobs:w:worker-1",
+      workerIdentity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
       workerStatus: "running",
     });
     expect(JSON.stringify(body)).not.toContain("cron-secret");
@@ -104,7 +107,7 @@ describe("GET /api/coastline/staging-evidence", () => {
     const readRuntimeEvidence = vi.fn().mockResolvedValue({
       protectedArtifactSha: "1".repeat(40),
       deployedArtifactSha: "1".repeat(40),
-      workerRegistrations: [{ name: "bull:automation-jobs:w:worker-1" }],
+      workerRegistrations: [runningWorker()],
       queueIdentity: "bullmq:automation-jobs",
       queueReachable: true,
       ...overrides,
@@ -117,6 +120,27 @@ describe("GET /api/coastline/staging-evidence", () => {
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain("redis://");
   });
+
+  it("returns deterministic queue-unreachable evidence when runtime discovery times out", async () => {
+    const readRuntimeEvidence = vi
+      .fn()
+      .mockRejectedValue(
+        new CoastlineStagingEvidenceError(
+          "COASTLINE_STAGING_QUEUE_UNREACHABLE",
+          503,
+        ),
+      );
+    const response = await createStagingEvidenceHandler(
+      readRuntimeEvidence,
+      () => NOW,
+    )(request(RUN_NONCE, true));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Remote staging evidence unavailable",
+      errorCode: "COASTLINE_STAGING_QUEUE_UNREACHABLE",
+    });
+  });
 });
 
 function request(runNonce?: string, authenticated = false) {
@@ -127,4 +151,12 @@ function request(runNonce?: string, authenticated = false) {
       ? { authorization: "Bearer cron-secret" }
       : undefined,
   });
+}
+
+function runningWorker() {
+  return {
+    identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
+    queueIdentity: "bullmq:automation-jobs",
+    status: "running" as const,
+  };
 }

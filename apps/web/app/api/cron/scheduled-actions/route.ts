@@ -27,16 +27,26 @@ export const GET = withError("cron/scheduled-actions", async (request) => {
   }
 
   const coastlineProbe = request.nextUrl.searchParams.get("coastline_probe");
-  if (coastlineProbe && env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
-    if (!env.CRON_SECRET) {
-      return NextResponse.json({ error: "Cron unavailable" }, { status: 503 });
+  if (coastlineProbe) {
+    if (!env.COASTLINE_DRAFT_PROPOSALS_ENABLED || !env.CRON_SECRET) {
+      return NextResponse.json(
+        { error: "Coastline cron probe unavailable" },
+        { status: 503 },
+      );
     }
-    return NextResponse.json(
-      createCoastlineCronAuthProbe({
-        runNonce: coastlineProbe,
-        cronSecret: env.CRON_SECRET,
-      }),
-    );
+    try {
+      return NextResponse.json(
+        createCoastlineCronAuthProbe({
+          runNonce: coastlineProbe,
+          cronSecret: env.CRON_SECRET,
+        }),
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Coastline cron probe unavailable" },
+        { status: 400 },
+      );
+    }
   }
 
   if (env.QSTASH_TOKEN) {

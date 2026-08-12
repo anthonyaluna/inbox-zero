@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCoastlineRemoteStagingEvidence,
   createCoastlineStagingRunNonce,
+  readCoastlineStagingRuntimeBinding,
 } from "@/utils/coastline/staging-evidence";
 
 const NOW = new Date("2026-08-12T16:00:00.000Z");
@@ -16,7 +17,7 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       cronEvidenceId: "b".repeat(64),
       protectedArtifactSha: PROTECTED_SHA,
       deployedArtifactSha: PROTECTED_SHA,
-      workerRegistrations: [{ name: "bull:automation-jobs:w:worker-1" }],
+      workerRegistrations: [runningWorker()],
       queueIdentity: "bullmq:automation-jobs",
       queueReachable: true,
       observedAt: NOW,
@@ -41,7 +42,7 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       queueStatus: "reachable",
       runNonce,
       schemaVersion: "coastline_inbox_zero_remote_staging_evidence.v1",
-      workerIdentity: "bull:automation-jobs:w:worker-1",
+      workerIdentity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
       workerStatus: "running",
     });
   });
@@ -73,10 +74,78 @@ describe("createCoastlineRemoteStagingEvidence", () => {
     );
   });
 
+  it("rejects a nonblank synthetic worker that is not bound to this queue", () => {
+    expect(() =>
+      createValidEvidence({
+        workerRegistrations: [
+          {
+            identity: "GCP does not support client list",
+            queueIdentity: "bullmq:automation-jobs",
+            status: "running",
+          },
+        ],
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "COASTLINE_STAGING_WORKER_STOPPED" }),
+    );
+  });
+
+  it("rejects a stopped queue-specific worker", () => {
+    expect(() =>
+      createValidEvidence({
+        workerRegistrations: [{ ...runningWorker(), status: "stopped" }],
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "COASTLINE_STAGING_WORKER_STOPPED" }),
+    );
+  });
+
   it("rejects an unreachable deployed queue", () => {
     expect(() => createValidEvidence({ queueReachable: false })).toThrowError(
       expect.objectContaining({ code: "COASTLINE_STAGING_QUEUE_UNREACHABLE" }),
     );
+  });
+
+  it("fails queue discovery with a deterministic error when readiness times out", async () => {
+    const never = new Promise<void>(() => undefined);
+
+    await expect(
+      readCoastlineStagingRuntimeBinding({
+        queueName: "automation-jobs",
+        protectedArtifactSha: PROTECTED_SHA,
+        deployedArtifactSha: PROTECTED_SHA,
+        timeoutMs: 5,
+        createQueueRuntime: () => ({
+          queueName: "automation-jobs",
+          waitUntilReady: () => never,
+          getWorkers: async () => [],
+          close: async () => undefined,
+        }),
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_STAGING_QUEUE_UNREACHABLE",
+      status: 503,
+    });
+  });
+
+  it("derives a running identity only from a real queue-specific registration", async () => {
+    const runtime = await readCoastlineStagingRuntimeBinding({
+      queueName: "automation-jobs",
+      protectedArtifactSha: PROTECTED_SHA,
+      deployedArtifactSha: PROTECTED_SHA,
+      createQueueRuntime: () => ({
+        queueName: "automation-jobs",
+        waitUntilReady: async () => undefined,
+        getWorkers: async () => [
+          { name: "GCP does not support client list" },
+          { name: "bull:b3RoZXItcXVldWU=:w:worker-x" },
+          { name: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1" },
+        ],
+        close: async () => undefined,
+      }),
+    });
+
+    expect(runtime.workerRegistrations).toEqual([runningWorker()]);
   });
 });
 
@@ -90,10 +159,18 @@ function createValidEvidence(
     cronEvidenceId: "b".repeat(64),
     protectedArtifactSha: PROTECTED_SHA,
     deployedArtifactSha: PROTECTED_SHA,
-    workerRegistrations: [{ name: "bull:automation-jobs:w:worker-1" }],
+    workerRegistrations: [runningWorker()],
     queueIdentity: "bullmq:automation-jobs",
     queueReachable: true,
     observedAt: NOW,
     ...overrides,
   });
+}
+
+function runningWorker() {
+  return {
+    identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
+    queueIdentity: "bullmq:automation-jobs",
+    status: "running" as const,
+  };
 }

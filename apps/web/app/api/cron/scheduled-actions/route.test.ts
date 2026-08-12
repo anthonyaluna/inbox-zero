@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import prisma from "@/utils/__mocks__/prisma";
 import { createCoastlineStagingRunNonce } from "@/utils/coastline/staging-evidence";
 
 const { envMock, captureExceptionMock } = vi.hoisted(() => ({
   envMock: {
-    COASTLINE_DRAFT_PROPOSALS_ENABLED: true,
+    COASTLINE_DRAFT_PROPOSALS_ENABLED: true as boolean | undefined,
     CRON_SECRET: "cron-secret",
     QSTASH_TOKEN: undefined as string | undefined,
   },
@@ -49,6 +50,21 @@ describe("scheduled actions Coastline cron probe", () => {
       evidenceId: expect.stringMatching(/^[a-f0-9]{64}$/),
       observedAt: expect.any(String),
     });
+  });
+
+  it.each([
+    false,
+    undefined,
+  ])("fails closed without processing when the Coastline flag is %s", async (coastlineEnabled) => {
+    envMock.COASTLINE_DRAFT_PROPOSALS_ENABLED = coastlineEnabled;
+
+    const response = await GET(request(true));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Coastline cron probe unavailable",
+    });
+    expect(prisma.scheduledAction.findMany).not.toHaveBeenCalled();
   });
 });
 
