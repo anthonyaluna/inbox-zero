@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { withEmailAccount } from "@/utils/middleware";
 import { unsubscribeSenderBody } from "@/utils/actions/unsubscriber.validation";
 import { unsubscribeSenderAndMark } from "@/utils/senders/unsubscribe";
+import { env } from "@/env";
+import {
+  assertCoastlineMutationAllowed,
+  CoastlineDraftOnlyPolicyError,
+} from "@/utils/coastline/draft-only-policy";
 
 export type UnsubscribeSenderResponse = Awaited<
   ReturnType<typeof unsubscribeSenderAndMark>
@@ -15,7 +20,7 @@ export type UnsubscribeSenderResponse = Awaited<
  * Check `unsubscribe.success` in the response: when it is false the sender was
  * left unchanged and the caller should fall back to opening `unsubscribeLink`.
  */
-export const POST = withEmailAccount(
+const unsubscribePost = withEmailAccount(
   "user/senders/unsubscribe",
   async (request) => {
     const { senderEmail, unsubscribeLink, listUnsubscribeHeader } =
@@ -32,3 +37,23 @@ export const POST = withEmailAccount(
     return NextResponse.json(result satisfies UnsubscribeSenderResponse);
   },
 );
+
+export const POST: typeof unsubscribePost = async (request, context) => {
+  try {
+    assertCoastlineMutationAllowed({
+      surface: "user/senders/unsubscribe",
+      mutation: "UNSUBSCRIBE",
+      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    });
+  } catch (error) {
+    if (error instanceof CoastlineDraftOnlyPolicyError) {
+      return NextResponse.json(
+        { error: error.message, errorCode: error.code, isKnownError: true },
+        { status: 400 },
+      );
+    }
+    throw error;
+  }
+
+  return unsubscribePost(request, context);
+};

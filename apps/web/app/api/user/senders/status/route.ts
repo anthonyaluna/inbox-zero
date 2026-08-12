@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { withEmailProvider } from "@/utils/middleware";
 import { setSenderStatusBody } from "@/utils/actions/unsubscriber.validation";
 import { setSenderStatusWithAutoArchive } from "@/utils/senders/unsubscribe";
+import { env } from "@/env";
+import {
+  assertCoastlineMutationAllowed,
+  CoastlineDraftOnlyPolicyError,
+} from "@/utils/coastline/draft-only-policy";
 
 export type SetSenderStatusResponse = Awaited<
   ReturnType<typeof setSenderStatusWithAutoArchive>
@@ -14,7 +19,7 @@ export type SetSenderStatusResponse = Awaited<
  * Existing mail from the sender is left alone; archiving the backlog is a
  * separate bulk operation.
  */
-export const POST = withEmailProvider(
+const setSenderStatusPost = withEmailProvider(
   "user/senders/status",
   async (request) => {
     const { senderEmail, status, labelId, labelName } =
@@ -32,3 +37,23 @@ export const POST = withEmailProvider(
     return NextResponse.json(result satisfies SetSenderStatusResponse);
   },
 );
+
+export const POST: typeof setSenderStatusPost = async (request, context) => {
+  try {
+    assertCoastlineMutationAllowed({
+      surface: "user/senders/status",
+      mutation: "SET_SENDER_STATUS",
+      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    });
+  } catch (error) {
+    if (error instanceof CoastlineDraftOnlyPolicyError) {
+      return NextResponse.json(
+        { error: error.message, errorCode: error.code, isKnownError: true },
+        { status: 400 },
+      );
+    }
+    throw error;
+  }
+
+  return setSenderStatusPost(request, context);
+};
