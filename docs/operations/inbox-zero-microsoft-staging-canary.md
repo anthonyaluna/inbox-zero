@@ -79,20 +79,23 @@ opaque value before it is ever sent to the verifier. Both the initial and replay
 Graph-readback evidence must bind to that exact created draft ID; the replay
 must return the same draft ID and never a second draft. The
 independent verifier must return distinct, authenticated Microsoft Graph
-evidence for the connected account/mailbox hash, granted scope identity,
-absence of `Mail.Send`, and the exact draft Graph readback. The draft readback
-must verify `isDraft=true`, the Drafts folder, proposal subject, and fixed test
-recipient. The runner binds every evidence ID to its receipt and refuses any
-response that includes message content, subjects, recipients, OAuth values,
-tokens, cookies, content-like strings, credentials, invalid timestamps, or
-oversized values.
+evidence for the connected account/mailbox hash, its dedicated non-production
+purpose, its non-shared and non-production classifications, granted scope
+identity, absence of `Mail.Send`, and the exact draft Graph readback. The draft
+readback must verify `isDraft=true`, the Drafts folder, proposal subject, and
+fixed test recipient. The runner binds every evidence ID to its receipt and
+refuses any response that includes message content, subjects, recipients, OAuth
+values, tokens, cookies, content-like strings, credentials, invalid timestamps,
+or oversized values.
 
 ## Execute
 
 First verify the connected identity through the independently registered
 verifier. The returned mailbox hash must bind to the exact protected
 `COASTLINE_MICROSOFT_CANARY_MAILBOX`; the account, source message, thread, and
-recipient hash must match their exact protected values; and the scope evidence
+recipient hash must match their exact protected values. The identity evidence
+must attest `mailboxPurpose=dedicated_non_production_canary`,
+`isSharedMailbox=false`, and `isProductionMailbox=false`, and the scope evidence
 must exclude `Mail.Send`. The runner performs these comparisons before posting
 the draft request. Stop if any comparison fails.
 
@@ -118,13 +121,14 @@ executor's receipt (`noSendCapability=Mail.Send_absent`).
 
 ## Receipt and terminal states
 
-On success, the runner writes one JSON receipt only to
-`COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR` and prints that same sanitized receipt.
-It contains account, thread, source-message, and draft IDs; Graph readback
-status; scope identity; idempotency key; no-send capability; replay result; and
-timestamp. It contains no mailbox body, subject, recipient name, OAuth value,
-token, or cookie. Receipts remain private runtime evidence and are excluded
-from Git.
+On success, the runner writes five sanitized JSON artifacts only to
+`COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR`: runner provenance, independently
+classified dedicated-mailbox evidence, the raw canary receipt, replay evidence,
+and the assembled promotion bundle. It prints only the raw canary receipt. The
+artifacts contain the bounded IDs, hashes, scope identity, no-send capability,
+replay result, and timestamps required by their exact schemas. They contain no
+mailbox body, subject, recipient name, OAuth value, token, or cookie. Receipts
+remain private runtime evidence and are excluded from Git.
 
 The raw canary receipt is not promotion evidence by itself. On a successful
 run, the runner persists its sanitized runner-provenance, dedicated-mailbox,

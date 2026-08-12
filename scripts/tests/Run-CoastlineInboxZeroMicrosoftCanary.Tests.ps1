@@ -131,11 +131,16 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
 
     try {
       $script:canaryCount = 1
+      $script:executorCalls = 0
+      $script:identityMailboxPurpose = "dedicated_non_production_canary"
+      $script:identityIsSharedMailbox = $false
+      $script:identityIsProductionMailbox = $false
       foreach ($entry in $environment.GetEnumerator()) { Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value }
       function Invoke-RestMethod {
         param($Uri, $Method, $Headers, $ContentType, $Body, $TimeoutSec)
         $script:restCalls++
         if ($Method -eq "Post") {
+          $script:executorCalls++
           $request = $Body | ConvertFrom-Json
           $script:runNonce = $request.runNonce
           return [pscustomobject]@{
@@ -146,7 +151,13 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
         $script:runNonce = $query["runNonce"]
         $kind = ([Uri]$Uri).AbsolutePath.TrimEnd("/").Split("/")[-1]
         $evidenceId = @{ identity = "identity-evidence"; scopes = "scopes-evidence"; "no-send" = "no-send-evidence"; "graph-readback" = "graph-evidence"; "idempotency-replay" = "replay-evidence"; "no-duplicate" = "unique-evidence" }[$kind]
-        return [pscustomobject]@{ schemaVersion = "coastline_microsoft_canary_evidence.v1"; kind = $kind; evidenceId = $evidenceId; verifierId = "independent-graph-verifier"; verifiedAt = $observedAt; verified = $true; accountId = $accountId; mailboxSha256 = $mailboxHash; sourceMessageId = $sourceMessageId; threadId = $threadId; draftId = "draft-001"; scopeIdentity = $scopeIdentity; mailSendCapability = "absent"; recipientSha256 = $recipientHash; idempotencyKey = $idempotencyKey; runNonce = $script:runNonce; idempotencyDraftCount = if ($kind -eq "no-duplicate") { 1 } else { $null } }
+        $independentEvidence = [ordered]@{ schemaVersion = "coastline_microsoft_canary_evidence.v1"; kind = $kind; evidenceId = $evidenceId; verifierId = "independent-graph-verifier"; verifiedAt = $observedAt; verified = $true; accountId = $accountId; mailboxSha256 = $mailboxHash; sourceMessageId = $sourceMessageId; threadId = $threadId; draftId = "draft-001"; scopeIdentity = $scopeIdentity; mailSendCapability = "absent"; recipientSha256 = $recipientHash; idempotencyKey = $idempotencyKey; runNonce = $script:runNonce; idempotencyDraftCount = if ($kind -eq "no-duplicate") { 1 } else { $null } }
+        if ($kind -eq "identity") {
+          $independentEvidence.mailboxPurpose = $script:identityMailboxPurpose
+          $independentEvidence.isSharedMailbox = $script:identityIsSharedMailbox
+          $independentEvidence.isProductionMailbox = $script:identityIsProductionMailbox
+        }
+        return [pscustomobject]$independentEvidence
       }
 
       $output = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient
@@ -156,11 +167,28 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-runner-provenance-*.json").Count | Should Be 1
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json").Count | Should Be 1
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-replay-evidence-*.json").Count | Should Be 1
+      $dedicatedMailboxPath = Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json" | Select-Object -First 1 -ExpandProperty FullName
+      $dedicatedMailbox = Get-Content -LiteralPath $dedicatedMailboxPath -Raw | ConvertFrom-Json
+      $dedicatedMailbox.mailbox_purpose | Should Be "dedicated_non_production_canary"
+      $dedicatedMailbox.is_shared_mailbox | Should Be $false
+      $dedicatedMailbox.is_production_mailbox | Should Be $false
       $bundlePath = Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-promotion-canary-evidence-*.json" | Select-Object -First 1 -ExpandProperty FullName
       (Get-Content -LiteralPath $bundlePath -Raw | ConvertFrom-Json).schema_version | Should Be "coastline_inbox_zero_promotion_canary_evidence.v1"
       ($output | Out-String) | Should Not Match "COASTLINE_CANARY_RECEIPT_INVALID"
 
       Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json" | Remove-Item -Force
+      $script:identityIsProductionMailbox = $true
+      $script:executorCalls = 0
+      try {
+        $mailboxClassificationFailure = . $scriptPath -BaseUrl $baseUrl -SourceMessageId $sourceMessageId -TestRecipient $recipient 2>&1
+      } catch {
+        $mailboxClassificationFailure = $_
+      }
+      ($mailboxClassificationFailure | Out-String) | Should Match "COASTLINE_CANARY_INDEPENDENT_EVIDENCE_MISSING"
+      $script:executorCalls | Should Be 0
+      @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "*.json").Count | Should Be 0
+      $script:identityIsProductionMailbox = $false
+
       $stagingEvidence = Get-Content -LiteralPath $stagingEvidencePath -Raw | ConvertFrom-Json
       $stagingEvidence.checks = @()
       $stagingEvidence | ConvertTo-Json -Depth 5 -Compress | Set-Content -LiteralPath $stagingEvidencePath -Encoding utf8NoBOM

@@ -225,12 +225,16 @@ function Assert-IndependentEvidence {
     [object]$Registration,
     [hashtable]$Expected
   )
-  Assert-ExactProperties -Value $Evidence -Expected @(
+  $expectedProperties = @(
     "schemaVersion", "kind", "evidenceId", "verifierId", "verifiedAt", "verified",
     "accountId", "mailboxSha256", "sourceMessageId", "threadId", "draftId",
     "scopeIdentity", "mailSendCapability", "recipientSha256", "idempotencyKey",
     "idempotencyDraftCount", "runNonce"
-  ) -Label "Independent $Kind evidence"
+  )
+  if ($Kind -eq "identity") {
+    $expectedProperties += @("mailboxPurpose", "isSharedMailbox", "isProductionMailbox")
+  }
+  Assert-ExactProperties -Value $Evidence -Expected $expectedProperties -Label "Independent $Kind evidence"
   if ($Evidence.schemaVersion -cne "coastline_microsoft_canary_evidence.v1" -or
     $Evidence.kind -cne $Kind -or $Evidence.verifierId -cne $Registration.independentVerifierId -or
     $Evidence.verified -ne $true -or -not (Test-OpaqueValue $Evidence.evidenceId) -or
@@ -256,6 +260,11 @@ function Assert-IndependentEvidence {
   }
   if ($Kind -ne "no-duplicate" -and $null -ne $Evidence.idempotencyDraftCount) {
     throw "Only the independent no-duplicate attestation may contain an idempotency draft count."
+  }
+  if ($Kind -eq "identity" -and
+    ($Evidence.mailboxPurpose -cne "dedicated_non_production_canary" -or
+      $Evidence.isSharedMailbox -ne $false -or $Evidence.isProductionMailbox -ne $false)) {
+    throw "Independent identity evidence did not attest a dedicated non-production, non-shared mailbox."
   }
   return $Evidence
 }
@@ -492,9 +501,9 @@ $dedicatedMailbox = [ordered]@{
   mailbox_identity_sha256 = $expected.mailboxSha256
   account_id = $expected.accountId
   identity_evidence_id = $evidence["identity"].evidenceId
-  mailbox_purpose = "dedicated_non_production_canary"
-  is_shared_mailbox = $false
-  is_production_mailbox = $false
+  mailbox_purpose = $evidence["identity"].mailboxPurpose
+  is_shared_mailbox = $evidence["identity"].isSharedMailbox
+  is_production_mailbox = $evidence["identity"].isProductionMailbox
 }
 $replayEvidence = [ordered]@{
   schema_version = "coastline_inbox_zero_replay_evidence.v1"

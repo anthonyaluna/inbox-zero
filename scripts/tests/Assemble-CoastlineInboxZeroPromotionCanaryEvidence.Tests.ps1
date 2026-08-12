@@ -35,6 +35,26 @@ Describe "Coastline Inbox Zero promotion canary evidence assembler" {
       $bundle.schema_version | Should Be "coastline_inbox_zero_promotion_canary_evidence.v1"
       $bundle.canary.draftId | Should Be "draft-001"
       $bundle.replay.idempotency_draft_count | Should Be 1
+
+      $validMailboxJson = Get-Content -LiteralPath $mailboxPath -Raw
+      foreach ($invalidClassification in @(
+        @{ property = "mailbox_purpose"; value = "production_operations" },
+        @{ property = "is_shared_mailbox"; value = $true },
+        @{ property = "is_production_mailbox"; value = $true }
+      )) {
+        Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+        $invalidMailbox = $validMailboxJson | ConvertFrom-Json
+        $invalidMailbox.PSObject.Properties[$invalidClassification.property].Value = $invalidClassification.value
+        $invalidMailbox | ConvertTo-Json | Set-Content -LiteralPath $mailboxPath -Encoding utf8NoBOM
+        $failure = $null
+        try {
+          & $scriptPath -ExpectedSha $sha -RemoteStagingReceiptPath $stagingPath -RunnerProvenancePath $runnerPath -DedicatedMailboxEvidencePath $mailboxPath -CanaryReceiptPath $canaryPath -ReplayReceiptPath $replayPath -OutputPath $outputPath | Out-Null
+        } catch {
+          $failure = $_
+        }
+        ($failure | Out-String) | Should Match "COASTLINE_CANARY_ASSEMBLY_INVALID"
+        Test-Path -LiteralPath $outputPath | Should Be $false
+      }
     } finally {
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

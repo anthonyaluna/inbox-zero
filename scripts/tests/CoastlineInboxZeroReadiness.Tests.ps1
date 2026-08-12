@@ -376,6 +376,34 @@ Describe "Coastline Inbox Zero promotion readiness" {
     } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
 
+  It "rejects mailbox evidence that identifies a shared mailbox" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    try {
+      $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+      $canary = Get-Content -LiteralPath $paths.canary -Raw | ConvertFrom-Json
+      $canary.dedicated_mailbox.is_shared_mailbox = $true
+      Write-TestJson $paths.canary $canary
+      $record = Invoke-TestReadiness $paths $currentSha
+      $record.state | Should Be "blocked"
+      @($record.evidence_matrix | Where-Object id -eq "dedicated_mailbox").status | Should Be "fail"
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
+  It "rejects mailbox evidence without the dedicated canary purpose" {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+    try {
+      $paths = New-CompleteReadinessEvidence $testRoot $currentSha
+      $canary = Get-Content -LiteralPath $paths.canary -Raw | ConvertFrom-Json
+      $canary.dedicated_mailbox.mailbox_purpose = "production_operations"
+      Write-TestJson $paths.canary $canary
+      $record = Invoke-TestReadiness $paths $currentSha
+      $record.state | Should Be "blocked"
+      @($record.evidence_matrix | Where-Object id -eq "dedicated_mailbox").status | Should Be "fail"
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
   It "rejects stale canary evidence" {
     $testRoot = Join-Path ([IO.Path]::GetTempPath()) "coastline-readiness-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
