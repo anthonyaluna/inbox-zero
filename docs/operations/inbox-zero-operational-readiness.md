@@ -16,6 +16,12 @@ rollback receipt, or approved pull-request receipt is present. Nothing in this
 record authorizes a deployment, production mailbox, send action, delete action,
 or promotion.
 
+The separate calendar lane is implemented and registered on the current branch.
+It can create an attendee event, which may deliver a meeting invitation, only
+from a clear, exact-date/time/timezone proposal with provider readback. This
+calendar lane is not proven by the draft-only Microsoft canary below and has no
+protected production receipt yet.
+
 The readiness checker binds every evaluation to the full SHA passed as
 `-ExpectedSha` and independently compares it with `git rev-parse HEAD`. This
 avoids a self-referential document hash while ensuring the emitted machine
@@ -88,10 +94,13 @@ do not establish or replace it.
   message bodies, subjects, cookies, or raw source-system records.
 - This Task 5 refresh contacted no remote endpoint, Microsoft Graph resource,
   mailbox, GitHub environment, deployment target, or production system.
-- Tasks 1–5 and final Waves A–E remain draft-only, no-send, and no-delete. Their
-  durable marker recovery, recipient-bucket validation, global mutation/scope
-  gates, worker-owned staging evidence, exact canary contract, and readiness
-  assembler are covered by the current branch tests.
+- The Microsoft email canary remains draft-only and no-send. The registered
+  calendar lane is separate: it may create a verified attendee event from a
+  clear proposal, but it is not an email-send capability and still requires its
+  own protected Graph receipt before production use. Durable marker recovery,
+  recipient-bucket validation, global mutation/scope gates, worker-owned
+  staging evidence, exact canary contract, and readiness assembly are covered
+  by the current branch tests.
 - Any supplied remote staging, canary, replay, and rollback receipt must use
   one current promotion nonce. Their fresh timestamps must be ordered from
   remote staging through canary/replay and then rollback. A legacy
