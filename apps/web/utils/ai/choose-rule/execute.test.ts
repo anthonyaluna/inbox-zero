@@ -19,6 +19,12 @@ const { envMock } = vi.hoisted(() => ({
   },
 }));
 
+const { mockClassifyCalendarContext, mockDispatchCalendarProposal } =
+  vi.hoisted(() => ({
+    mockClassifyCalendarContext: vi.fn(),
+    mockDispatchCalendarProposal: vi.fn(),
+  }));
+
 vi.mock("@/env", () => ({
   env: envMock,
 }));
@@ -29,6 +35,14 @@ vi.mock("@/utils/ai/actions", () => ({
 
 vi.mock("@/utils/ai/choose-rule/draft-management", () => ({
   updateExecutedActionWithDraftId: vi.fn(),
+}));
+
+vi.mock("@/utils/coastline/calendar-context-broker", () => ({
+  classifyCalendarContext: mockClassifyCalendarContext,
+}));
+
+vi.mock("@/utils/coastline/action-router", () => ({
+  dispatchClearCoastlineCalendarProposal: mockDispatchCalendarProposal,
 }));
 
 vi.mock("@/utils/prisma", () => ({
@@ -90,6 +104,13 @@ describe("executeAct", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     envMock.WHITELIST_FROM = undefined;
+    mockClassifyCalendarContext.mockReturnValue({
+      status: "not_scheduling",
+      reason: "no_scheduling_intent",
+    });
+    mockDispatchCalendarProposal.mockResolvedValue({
+      receipt: { eventId: "event-1" },
+    });
     mockExecutedActionUpdate.mockResolvedValue({});
     mockExecutedRuleUpdate.mockResolvedValue({});
   });
@@ -150,6 +171,41 @@ describe("executeAct", () => {
       where: { id: "executed-rule-1" },
       data: { status: ExecutedRuleStatus.APPLIED },
     });
+  });
+
+  it("dispatches a clear calendar proposal once before mailbox actions", async () => {
+    const proposal = {
+      accountId: "email-account-1",
+      threadId: "thread-id-1",
+      sourceMessageId: "message-id-1",
+      idempotencyKey:
+        "inbox-zero/calendar/email-account-1/thread-id-1/message-id-1",
+    };
+    mockClassifyCalendarContext.mockReturnValue({
+      status: "clear",
+      reason: "explicit_scheduling_request",
+      proposal,
+    });
+    const microsoftClient = { name: "microsoft" } as EmailProvider;
+    mockRunActionFunction.mockResolvedValueOnce({ success: true });
+
+    await executeAct({
+      client: microsoftClient,
+      executedRule: {
+        ...baseExecutedRule,
+        actionItems: [{ id: "action-1", type: ActionType.LABEL }],
+      } as any,
+      message,
+      emailAccount,
+      logger,
+    });
+
+    expect(mockDispatchCalendarProposal).toHaveBeenCalledTimes(1);
+    expect(mockDispatchCalendarProposal).toHaveBeenCalledWith({
+      proposal,
+      logger: expect.anything(),
+    });
+    expect(mockRunActionFunction).toHaveBeenCalledTimes(1);
   });
 
   it("records actions skipped by the executor without failing the rule", async () => {

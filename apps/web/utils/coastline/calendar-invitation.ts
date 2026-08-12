@@ -25,7 +25,9 @@ export const coastlineCalendarInvitationProposalSchema = z
     startAt: z.string().datetime(),
     endAt: z.string().datetime(),
     timezone: z.string().trim().min(1).max(100),
-    location: z.string().trim().min(1).max(500),
+    // Empty means the thread supplied no location. It is absence of evidence,
+    // not a guessed location, and is preserved through provider readback.
+    location: z.string().trim().max(500),
     attendees: z.array(invitationAttendeeSchema).min(1).max(50),
     schedulingStatus: z.enum(["clear", "ambiguous", "conflicting"]),
     idempotencyKey: z.string().min(1),
@@ -173,7 +175,9 @@ export async function executeCoastlineCalendarInvitation({
     providerConnectionId: created.providerConnectionId,
   });
 
-  if (!matchesCalendarInvitation({ proposal, readback, eventId: created.eventId })) {
+  if (
+    !matchesCalendarInvitation({ proposal, readback, eventId: created.eventId })
+  ) {
     await reservations.fail({
       reservationId: reservation.reservationId,
       recoverableErrorCode: "COASTLINE_CALENDAR_READBACK_FAILED",
@@ -280,7 +284,8 @@ function matchesCalendarInvitation({
       readback.startAt === proposal.startAt &&
       readback.endAt === proposal.endAt &&
       readback.location === proposal.location &&
-      attendeeSetHash(readback.attendees) === attendeeSetHash(proposal.attendees),
+      attendeeSetHash(readback.attendees) ===
+        attendeeSetHash(proposal.attendees),
   );
 }
 
@@ -289,11 +294,17 @@ function attendeeSetHash(attendees: Array<{ email: string }>) {
 }
 
 function normalizeAttendees(attendees: Array<{ email: string }>) {
-  return attendees.map((attendee) => attendee.email.trim().toLowerCase()).sort();
+  return attendees
+    .map((attendee) => attendee.email.trim().toLowerCase())
+    .sort();
 }
 
 function durationMinutes(proposal: CoastlineCalendarInvitationProposal) {
-  return (new Date(proposal.endAt).getTime() - new Date(proposal.startAt).getTime()) / 60000;
+  return (
+    (new Date(proposal.endAt).getTime() -
+      new Date(proposal.startAt).getTime()) /
+    60_000
+  );
 }
 
 function hash(value: string) {
