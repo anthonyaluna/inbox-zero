@@ -7,6 +7,7 @@ import {
 } from "@/utils/coastline/draft-proposal";
 import {
   reconcileCoastlineDraft,
+  recordCoastlineDraftCreation,
   reserveOrReconcileCoastlineDraft,
 } from "@/utils/coastline/draft-reservation";
 
@@ -135,7 +136,9 @@ describe("reserveOrReconcileCoastlineDraft", () => {
         actionId: "action-2",
         proposal,
         proposalFingerprint: "fingerprint-1",
-        client: {} as EmailProvider,
+        client: {
+          getDrafts: vi.fn().mockResolvedValue([]),
+        } as unknown as EmailProvider,
       }),
     ).resolves.toEqual({
       reservationId: "reservation-1",
@@ -162,7 +165,9 @@ describe("reserveOrReconcileCoastlineDraft", () => {
         actionId: "action-2",
         proposal,
         proposalFingerprint: "fingerprint-1",
-        client: {} as EmailProvider,
+        client: {
+          getDrafts: vi.fn().mockResolvedValue([]),
+        } as unknown as EmailProvider,
       }),
     ).resolves.toMatchObject({ state: "recovery_required" });
 
@@ -211,5 +216,123 @@ describe("reserveOrReconcileCoastlineDraft", () => {
         data: expect.objectContaining({ terminalState: "created_verified" }),
       }),
     );
+  });
+
+  it("allows one provider create across two action IDs through the durable claim", async () => {
+    const reservation = {
+      id: "reservation-1",
+      proposalFingerprint: "fingerprint-1",
+      executedActionId: "action-1",
+      creationClaimId: null as string | null,
+      draftId: null as string | null,
+      terminalState: "reserved",
+    };
+    reservations.upsert.mockImplementation(async () => reservation);
+    reservations.updateMany.mockImplementation(async ({ where, data }) => {
+      if (
+        where.creationClaimId === null &&
+        reservation.creationClaimId === null &&
+        data.creationClaimId
+      ) {
+        reservation.creationClaimId = data.creationClaimId;
+        return { count: 1 };
+      }
+      if (
+        where.creationClaimId === reservation.creationClaimId &&
+        where.draftId === null &&
+        data.draftId
+      ) {
+        reservation.draftId = data.draftId;
+        reservation.terminalState = data.terminalState;
+        return { count: 1 };
+      }
+      return { count: 0 };
+    });
+    const client = {
+      getDrafts: vi.fn().mockResolvedValue([]),
+    } as unknown as EmailProvider;
+    const draftEmail = vi.fn().mockResolvedValue({ draftId: "draft-1" });
+
+    const creator = await reserveOrReconcileCoastlineDraft({
+      actionId: "action-1",
+      proposal,
+      proposalFingerprint: "fingerprint-1",
+      client,
+    });
+    const created = await draftEmail();
+    await recordCoastlineDraftCreation({
+      reservationId: creator.reservationId,
+      draftId: created.draftId,
+      creationClaimId: "action-1",
+    });
+    const replay = await reserveOrReconcileCoastlineDraft({
+      actionId: "action-2",
+      proposal,
+      proposalFingerprint: "fingerprint-1",
+      client,
+    });
+
+    expect(creator.state).toBe("reserved");
+    expect(replay).toEqual({
+      reservationId: "reservation-1",
+      draftId: "draft-1",
+      state: "created_unverified",
+    });
+    expect(draftEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers one matching provider draft after a crash before draft ID persistence", async () => {
+    const reservation = {
+      id: "reservation-1",
+      proposalFingerprint: "fingerprint-1",
+      executedActionId: "action-1",
+      creationClaimId: "action-1",
+      draftId: null as string | null,
+      terminalState: "reserved",
+    };
+    reservations.upsert.mockImplementation(async () => reservation);
+    reservations.updateMany.mockImplementation(async ({ data }) => {
+      if (data.draftId === "draft-1") {
+        reservation.draftId = data.draftId;
+        reservation.terminalState = data.terminalState;
+        return { count: 1 };
+      }
+      return { count: 0 };
+    });
+    const client = {
+      getDrafts: vi.fn().mockResolvedValue([
+        {
+          id: "draft-1",
+          threadId: "thread-1",
+          subject: "Subject",
+          headers: {
+            from: "account@example.com",
+            to: "recipient@example.com",
+            cc: "",
+            bcc: "",
+            subject: "Subject",
+            date: "2026-08-11T12:00:00.000Z",
+          },
+          textPlain:
+            "Body\n\n---- Original Message ----\nFrom: sender@example.com",
+          snippet: "",
+          historyId: "",
+          inline: [],
+        },
+      ]),
+    } as unknown as EmailProvider;
+
+    await expect(
+      reserveOrReconcileCoastlineDraft({
+        actionId: "action-2",
+        proposal,
+        proposalFingerprint: "fingerprint-1",
+        client,
+      }),
+    ).resolves.toEqual({
+      reservationId: "reservation-1",
+      draftId: "draft-1",
+      state: "created_unverified",
+    });
   });
 });

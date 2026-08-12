@@ -3,6 +3,7 @@ import type { EmailProvider } from "@/utils/email/types";
 import type { InboxZeroDraftProposal } from "@/utils/coastline/draft-proposal";
 import { convertEmailHtmlToText } from "@/utils/mail";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
+import { stripQuotedContent } from "@/utils/email/strip-quoted-content";
 import prisma from "@/utils/prisma";
 
 type ReservationState =
@@ -22,6 +23,7 @@ export async function reserveOrReconcileCoastlineDraft({
   actionId,
   proposal,
   proposalFingerprint = fingerprintProposal(proposal),
+  client,
 }: ReservationInput): Promise<{
   reservationId: string;
   draftId: string | null;
@@ -71,6 +73,13 @@ export async function reserveOrReconcileCoastlineDraft({
       };
     }
 
+    const providerRecovery = await recoverProviderDraft({
+      reservationId: reservation.id,
+      proposal,
+      client,
+    });
+    if (providerRecovery) return providerRecovery;
+
     for (let attempt = 0; attempt < 3; attempt++) {
       const recovered = await prisma.coastlineDraftReservation.findUnique({
         where: { id: reservation.id },
@@ -100,6 +109,68 @@ export async function reserveOrReconcileCoastlineDraft({
     draftId: reservation.draftId,
     state: reservation.terminalState as ReservationState,
   };
+}
+
+async function recoverProviderDraft({
+  reservationId,
+  proposal,
+  client,
+}: {
+  reservationId: string;
+  proposal: InboxZeroDraftProposal;
+  client: EmailProvider;
+}): Promise<{
+  reservationId: string;
+  draftId: string | null;
+  state: ReservationState;
+} | null> {
+  let drafts: Awaited<ReturnType<EmailProvider["getDrafts"]>>;
+  try {
+    drafts = await client.getDrafts({ maxResults: 100 });
+  } catch {
+    await markRecoveryRequired(
+      reservationId,
+      "COASTLINE_DRAFT_PROVIDER_RECONCILIATION_UNAVAILABLE",
+    );
+    return {
+      reservationId,
+      draftId: null,
+      state: "recovery_required",
+    };
+  }
+
+  const matches = drafts.filter((draft) =>
+    matchesProposal({ draft, draftId: draft.id, proposal }),
+  );
+  if (matches.length > 1) {
+    await markRecoveryRequired(
+      reservationId,
+      "COASTLINE_DRAFT_PROVIDER_RECONCILIATION_AMBIGUOUS",
+    );
+    return {
+      reservationId,
+      draftId: null,
+      state: "recovery_required",
+    };
+  }
+  if (matches.length === 0) return null;
+
+  const draftId = matches[0]?.id;
+  if (!draftId) return null;
+  const persisted = await prisma.coastlineDraftReservation.updateMany({
+    where: {
+      id: reservationId,
+      draftId: null,
+      terminalState: "reserved",
+    },
+    data: {
+      draftId,
+      terminalState: "created_unverified",
+      recoverableErrorCode: null,
+    },
+  });
+  if (persisted.count !== 1) return null;
+  return { reservationId, draftId, state: "created_unverified" };
 }
 
 export async function recordCoastlineDraftCreation({
@@ -225,10 +296,6 @@ function normalizeRecipients(value: string | undefined) {
     })
     .filter(Boolean)
     .sort();
-}
-
-function stripQuotedContent(text: string) {
-  return text.split(/\n\nOn .* wrote:/)[0]?.trim() ?? "";
 }
 
 export function fingerprintProposal(proposal: InboxZeroDraftProposal) {

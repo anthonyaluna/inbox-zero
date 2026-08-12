@@ -6,6 +6,7 @@ import type { EmailProvider } from "@/utils/email/types";
 import { convertEmailHtmlToText } from "@/utils/mail";
 import type { ParsedMessage } from "@/utils/types";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
+import { stripQuotedContent as stripQuotedEmailContent } from "@/utils/email/strip-quoted-content";
 import {
   createInboxZeroDraftReceipt,
   parseInboxZeroDraftReceipt,
@@ -498,24 +499,8 @@ export function extractDraftPlainText(draft: ParsedMessage): string {
 /**
  * Removes quoted content from email text.
  */
-export function stripQuotedContent(text: string): string {
-  const quoteHeaderPatterns = [
-    /\n\nOn .* wrote:/,
-    /\n\n----+ Original Message ----+/,
-    /\n\n>+ On .*/,
-    /\n\nFrom: .*/,
-  ];
-
-  let result = text;
-  for (const pattern of quoteHeaderPatterns) {
-    const parts = result.split(pattern);
-    if (parts.length > 1) {
-      result = parts[0];
-      break;
-    }
-  }
-
-  return result.trim();
+export function stripQuotedContent(text: string) {
+  return stripQuotedEmailContent(text);
 }
 
 /**
