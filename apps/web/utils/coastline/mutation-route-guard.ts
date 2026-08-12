@@ -5,9 +5,9 @@ import {
   CoastlineDraftOnlyPolicyError,
 } from "@/utils/coastline/draft-only-policy";
 
-type RouteHandler = (
-  request: NextRequest,
-  context: unknown,
+type RouteHandler<TRequest extends NextRequest> = (
+  request: TRequest,
+  context: any,
 ) => Response | Promise<Response>;
 
 /**
@@ -15,7 +15,10 @@ type RouteHandler = (
  * body parsing, or persistence work starts when Coastline draft-only mode is
  * active. Keep the guard outside the route middleware stack.
  */
-export function withCoastlineMutationGuard<T extends RouteHandler>(
+export function withCoastlineMutationGuard<
+  TRequest extends NextRequest,
+  T extends RouteHandler<TRequest>,
+>(
   {
     surface,
     mutation,
@@ -25,7 +28,7 @@ export function withCoastlineMutationGuard<T extends RouteHandler>(
   },
   handler: T,
 ): T {
-  return (async (request: NextRequest, context: unknown) => {
+  return (async (request: TRequest, context: any) => {
     try {
       assertCoastlineMutationAllowed({
         surface,
