@@ -38,15 +38,23 @@ describe("Inbox Zero draft proposal contract", () => {
     expect(proposal.action).toBe("draft_only");
   });
 
-  it("maps only to the existing Outlook draft action", () => {
+  it("maps each recipient bucket to the existing Outlook draft action", () => {
     const request = toCoastlineOutlookDraftRequest(
-      createInboxZeroDraftProposal(baseInput),
+      createInboxZeroDraftProposal({
+        ...baseInput,
+        to: ["to@example.com"],
+        cc: ["cc@example.com"],
+        bcc: ["bcc@example.com"],
+      }),
     );
 
     expect(request.action).toBe("outlook_draft_create");
     expect(request.draftOnly).toBe(true);
     expect(request.externalMessage).toBe(false);
     expect(request.idempotencyKey).toContain("inbox-zero/draft");
+    expect(request.to).toEqual(["to@example.com"]);
+    expect(request.cc).toEqual(["cc@example.com"]);
+    expect(request.bcc).toEqual(["bcc@example.com"]);
   });
 
   it("rejects send, archive, and unknown fields at the boundary", () => {

@@ -5,6 +5,7 @@ import {
   stripQuotedContent,
   isDraftUnmodified,
   createOrReconcileCoastlineDraft,
+  normalizeRecipientBuckets,
   updateExecutedActionWithDraftId,
 } from "@/utils/ai/choose-rule/draft-management";
 import { stripQuotedHtmlContent } from "@/utils/email/parse-message-reply";
@@ -807,6 +808,201 @@ describe("createOrReconcileCoastlineDraft", () => {
     });
 
     expect(createDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails readback when a To recipient is returned as BCC", async () => {
+    const proposalWithBcc = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockResolvedValue({
+      draftId: null,
+      draftContextMetadata: {},
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithBcc,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "bcc@example.com",
+                cc: "",
+                bcc: "to@example.com",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_READBACK_FAILED",
+    });
+  });
+
+  it("accepts readback when each recipient remains in its original bucket", async () => {
+    const proposalWithRecipientBuckets = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com", "second@example.com"],
+      cc: ["cc@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockReset();
+    mockFindUnique
+      .mockResolvedValueOnce({
+        draftId: null,
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {},
+        updatedAt: new Date("2026-08-11T12:00:01.000Z"),
+      })
+      .mockResolvedValueOnce({
+        draftId: "draft-123",
+        draftContextMetadata: {
+          coastlineDraft: {
+            ...createInboxZeroDraftReceipt({
+              proposal: proposalWithRecipientBuckets,
+              draftId: "draft-123",
+            }),
+            readBackAt: "2026-08-11T12:00:03.000Z",
+            terminalState: "created_verified",
+          },
+        },
+      });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithRecipientBuckets,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "Second <SECOND@example.com>; To <TO@example.com>",
+                cc: "CC <CC@example.com>",
+                bcc: "BCC <BCC@example.com>",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).resolves.toMatchObject({
+      draftId: "draft-123",
+      receipt: { terminalState: "created_verified" },
+    });
+  });
+
+  it("fails readback when a CC recipient is returned as To", async () => {
+    const proposalWithCc = createInboxZeroDraftProposal({
+      ...proposal,
+      to: ["to@example.com"],
+      cc: ["cc@example.com"],
+    });
+    mockReserve.mockResolvedValueOnce({
+      reservationId: "reservation-1",
+      draftId: null,
+      state: "reserved",
+    });
+    mockFindUnique.mockResolvedValue({
+      draftId: null,
+      draftContextMetadata: {},
+      updatedAt: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    await expect(
+      createOrReconcileCoastlineDraft({
+        actionId: "action-123",
+        proposal: proposalWithCc,
+        client: {
+          getDraft: vi.fn().mockResolvedValue(
+            createParsedMessage({
+              id: "draft-123",
+              threadId: "thread-456",
+              subject: "Property documents",
+              headers: {
+                from: "account@example.com",
+                to: "cc@example.com",
+                cc: "to@example.com",
+                bcc: "",
+                subject: "Property documents",
+                date: "2026-08-11T12:00:00.000Z",
+              },
+              textPlain: "I will send the lease packet this afternoon.",
+            }),
+          ),
+        } as unknown as EmailProvider,
+        createDraft: vi.fn().mockResolvedValue({ draftId: "draft-123" }),
+        logger,
+      }),
+    ).rejects.toMatchObject({
+      code: "COASTLINE_DRAFT_READBACK_FAILED",
+    });
+  });
+});
+
+describe("normalizeRecipientBuckets", () => {
+  it("normalizes duplicate recipients within their original buckets", () => {
+    expect(
+      normalizeRecipientBuckets({
+        to: [
+          "  Primary Recipient <PRIMARY@example.com> ",
+          "secondary@example.com",
+          "primary@example.com",
+        ],
+        cc: ["  Carbon <CC@example.com> "],
+        bcc: ["  Blind <BCC@example.com> "],
+      }),
+    ).toEqual({
+      to: ["primary@example.com", "secondary@example.com"],
+      cc: ["cc@example.com"],
+      bcc: ["bcc@example.com"],
+    });
+  });
+
+  it("keeps empty optional CC and BCC buckets empty", () => {
+    expect(
+      normalizeRecipientBuckets({
+        to: ["recipient@example.com"],
+      }),
+    ).toEqual({
+      to: ["recipient@example.com"],
+      cc: [],
+      bcc: [],
+    });
   });
 });
 

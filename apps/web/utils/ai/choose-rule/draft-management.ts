@@ -322,19 +322,10 @@ async function assertExactDraftReadback({
     throw new Error("Draft content did not match the reserved proposal");
   }
 
-  const actualRecipients = normalizeRecipients([
-    draft.headers.to,
-    draft.headers.cc,
-    draft.headers.bcc,
-  ]);
-  const expectedRecipients = normalizeRecipients([
-    ...proposal.to,
-    ...proposal.cc,
-    ...proposal.bcc,
-  ]);
-  if (actualRecipients.join("\n") !== expectedRecipients.join("\n")) {
-    throw new Error("Draft recipients did not match the reserved proposal");
-  }
+  assertExactRecipientBuckets({
+    actual: draft.headers,
+    expected: proposal,
+  });
 }
 
 async function assertPersistedVerifiedReceipt({
@@ -405,17 +396,6 @@ function parseReceipt(value: unknown): InboxZeroDraftReceipt | null {
 
 function createDraftRecoveryError(message: string) {
   return Object.assign(new Error(message), { code: DRAFT_RECOVERY_ERROR_CODE });
-}
-
-function normalizeRecipients(values: Array<string | undefined>) {
-  return values
-    .flatMap((value) => (value ?? "").split(/[;,]/))
-    .map((value) => {
-      const match = value.match(/<([^>]+)>/);
-      return (match?.[1] ?? value).trim().toLowerCase();
-    })
-    .filter(Boolean)
-    .sort();
 }
 
 async function persistDraftReceipt({
@@ -565,4 +545,45 @@ function extractDraftComparisonText(draft: ParsedMessage): {
     text: extractDraftPlainText(draft),
     source: "textPlain",
   };
+}
+
+type RecipientBucketsInput = {
+  to?: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
+};
+
+export function normalizeRecipientBuckets(input: RecipientBucketsInput) {
+  return {
+    to: normalizeRecipientBucket(input.to),
+    cc: normalizeRecipientBucket(input.cc),
+    bcc: normalizeRecipientBucket(input.bcc),
+  };
+}
+
+function assertExactRecipientBuckets({
+  actual,
+  expected,
+}: {
+  actual: RecipientBucketsInput;
+  expected: RecipientBucketsInput;
+}) {
+  const normalizedActual = normalizeRecipientBuckets(actual);
+  const normalizedExpected = normalizeRecipientBuckets(expected);
+  if (JSON.stringify(normalizedActual) !== JSON.stringify(normalizedExpected)) {
+    throw new Error("Draft recipient buckets did not match the reserved proposal");
+  }
+}
+
+function normalizeRecipientBucket(value: string | string[] | undefined) {
+  const values = Array.isArray(value) ? value : [value ?? ""];
+  return [...new Set(
+    values
+      .flatMap((entry) => entry.split(/[;,]/))
+      .map((entry) => {
+        const match = entry.match(/<([^>]+)>/);
+        return (match?.[1] ?? entry).trim().toLowerCase();
+      })
+      .filter(Boolean),
+  )].sort();
 }
