@@ -510,12 +510,20 @@ $replayEvidence = [ordered]@{
   no_duplicate_evidence_id = $response.noDuplicateEvidenceId
   idempotency_draft_count = $response.idempotencyDraftCount
 }
+$canaryReceiptPath = Join-Path $receiptDirectory ("inbox-zero-microsoft-canary-{0}.json" -f $receiptSuffix)
+$runnerProvenancePath = Join-Path $receiptDirectory ("inbox-zero-runner-provenance-{0}.json" -f $receiptSuffix)
+$dedicatedMailboxPath = Join-Path $receiptDirectory ("inbox-zero-dedicated-mailbox-{0}.json" -f $receiptSuffix)
+$replayEvidencePath = Join-Path $receiptDirectory ("inbox-zero-replay-evidence-{0}.json" -f $receiptSuffix)
+$promotionBundlePath = Join-Path $receiptDirectory ("inbox-zero-promotion-canary-evidence-{0}.json" -f $receiptSuffix)
+$assemblerPath = Join-Path $repoRoot "scripts/Assemble-CoastlineInboxZeroPromotionCanaryEvidence.ps1"
 try {
-  $response | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-microsoft-canary-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
-  $runnerProvenance | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-runner-provenance-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
-  $dedicatedMailbox | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-dedicated-mailbox-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
-  $replayEvidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $receiptDirectory ("inbox-zero-replay-evidence-{0}.json" -f $receiptSuffix)) -Encoding utf8NoBOM
+  if (-not (Test-Path -LiteralPath $assemblerPath -PathType Leaf)) { throw "Promotion assembler is unavailable." }
+  $response | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $canaryReceiptPath -Encoding utf8NoBOM
+  $runnerProvenance | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runnerProvenancePath -Encoding utf8NoBOM
+  $dedicatedMailbox | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $dedicatedMailboxPath -Encoding utf8NoBOM
+  $replayEvidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $replayEvidencePath -Encoding utf8NoBOM
+  & $assemblerPath -ExpectedSha $currentSha -RemoteStagingReceiptPath $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH -RunnerProvenancePath $runnerProvenancePath -DedicatedMailboxEvidencePath $dedicatedMailboxPath -CanaryReceiptPath $canaryReceiptPath -ReplayReceiptPath $replayEvidencePath -OutputPath $promotionBundlePath | Out-Null
 } catch {
-  Stop-Canary -Code "COASTLINE_CANARY_EVIDENCE_PERSISTENCE_INVALID" -Message "The sanitized promotion evidence components could not be persisted."
+  Stop-Canary -Code "COASTLINE_CANARY_EVIDENCE_PERSISTENCE_INVALID" -Message "The sanitized promotion evidence bundle could not be persisted."
 }
 $response | ConvertTo-Json -Depth 4

@@ -126,10 +126,13 @@ timestamp. It contains no mailbox body, subject, recipient name, OAuth value,
 token, or cookie. Receipts remain private runtime evidence and are excluded
 from Git.
 
-The raw canary receipt is not promotion evidence by itself. Retain the remote
-staging receipt, runner provenance record, dedicated-mailbox evidence, raw
-canary receipt, and replay evidence outside Git, then create the exact composite
-bundle consumed by readiness:
+The raw canary receipt is not promotion evidence by itself. On a successful
+run, the runner persists its sanitized runner-provenance, dedicated-mailbox,
+raw-canary, replay, and exact composite bundle in the protected receipt
+directory. It invokes the assembler itself and fails the canary if that bundle
+cannot be produced. The bundle is the only `-CanaryReceiptPath` input accepted
+by readiness. Operators may run the same deterministic assembler only to
+rebuild a missing bundle from retained component receipts:
 
 ```powershell
 pwsh -File scripts/Assemble-CoastlineInboxZeroPromotionCanaryEvidence.ps1 `

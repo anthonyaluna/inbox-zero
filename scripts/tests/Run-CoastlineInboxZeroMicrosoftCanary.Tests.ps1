@@ -156,8 +156,7 @@ Get-ChildItem Env:COASTLINE_* | Remove-Item -ErrorAction SilentlyContinue
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-runner-provenance-*.json").Count | Should Be 1
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json").Count | Should Be 1
       @(Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-replay-evidence-*.json").Count | Should Be 1
-      $bundlePath = Join-Path $testRoot "promotion-bundle.json"
-      & $assemblerPath -ExpectedSha (& git rev-parse HEAD).Trim() -RemoteStagingReceiptPath $stagingEvidencePath -RunnerProvenancePath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-runner-provenance-*.json" | Select-Object -First 1 -ExpandProperty FullName) -DedicatedMailboxEvidencePath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-dedicated-mailbox-*.json" | Select-Object -First 1 -ExpandProperty FullName) -CanaryReceiptPath $receiptPath -ReplayReceiptPath (Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-replay-evidence-*.json" | Select-Object -First 1 -ExpandProperty FullName) -OutputPath $bundlePath | Out-Null
+      $bundlePath = Get-ChildItem -LiteralPath $receiptDirectory -Filter "inbox-zero-promotion-canary-evidence-*.json" | Select-Object -First 1 -ExpandProperty FullName
       (Get-Content -LiteralPath $bundlePath -Raw | ConvertFrom-Json).schema_version | Should Be "coastline_inbox_zero_promotion_canary_evidence.v1"
       ($output | Out-String) | Should Not Match "COASTLINE_CANARY_RECEIPT_INVALID"
 
