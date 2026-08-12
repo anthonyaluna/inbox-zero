@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -24,23 +24,20 @@ const directMailboxAndRuleMutationRoutes = [
   "app/api/cron/draft-cleanup/route.ts",
 ];
 
-const directMailboxAndRuleMutationCores = [
-  "utils/actions/assistant-chat.ts",
-  "utils/actions/assistant-chat-confirmation.ts",
-  "utils/actions/clean.ts",
-  "utils/actions/cold-email.ts",
-  "utils/actions/mail.ts",
-  "utils/actions/mail-bulk-action.ts",
-  "utils/actions/rule.ts",
-  "utils/actions/unsubscriber.ts",
-  "utils/actions/whitelist.ts",
-  "utils/ai/actions.ts",
-  "utils/ai/assistant/chat-folder-tools.ts",
-  "utils/ai/assistant/chat-inbox-tools.ts",
-  "utils/ai/draft-cleanup.ts",
-  "utils/messaging/chat-sdk/bot.ts",
-  "utils/rule/rule.ts",
-];
+const providerMutationSink =
+  /\.(?:archiveMessage|archiveThread|archiveThreadWithLabel|blockUnsubscribedEmail|bulkArchiveFromSenders|bulkArchiveThreads|bulkTrashFromSenders|createAutoArchiveFilter|createDraft|createFilter|createLabel|deleteDraft|deleteFilter|deleteLabel|forwardEmail|getOrCreateFolderIdByName|getOrCreateInboxZeroLabel|labelMessage|markRead|markReadThread|markSpam|moveThreadToFolder|removeThreadLabel|removeThreadLabels|replyToEmail|sendDraft|sendEmail|sendEmailWithHtml|starMessage|trashThread|unarchiveThread|untrashThread|unwatchEmails|updateDraft|watchEmails)\s*\(/;
+
+function findTypeScriptSources(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return findTypeScriptSources(path);
+    return entry.isFile() &&
+      /\.tsx?$/.test(entry.name) &&
+      !/\.test\.tsx?$/.test(entry.name)
+      ? [path]
+      : [];
+  });
+}
 
 describe("Coastline direct mutation route inventory", () => {
   it("puts every direct mailbox and rule mutation behind the shared early guard", () => {
@@ -50,12 +47,51 @@ describe("Coastline direct mutation route inventory", () => {
     }
   });
 
-  it("puts every non-route mailbox and rule mutation behind the shared policy", () => {
-    for (const sourcePath of directMailboxAndRuleMutationCores) {
-      const source = readFileSync(resolve(process.cwd(), sourcePath), "utf8");
-      expect(source, sourcePath).toMatch(
-        /assertCoastline(?:MutationAllowed|DraftOnlyAction)/,
-      );
+  it("discovers provider mutation sinks and requires their construction boundary to be guarded", () => {
+    const root = process.cwd();
+    const sinkPaths = findTypeScriptSources(resolve(root, "utils"))
+      .filter((path) => providerMutationSink.test(readFileSync(path, "utf8")))
+      .map((path) => path.slice(root.length + 1).replaceAll("\\", "/"));
+
+    expect(sinkPaths).toEqual(
+      expect.arrayContaining([
+        "utils/ai/assistant/chat-folder-tools.ts",
+        "utils/ai/assistant/chat-inbox-tools.ts",
+        "utils/ai/assistant/chat-label-tools.ts",
+        "utils/drive/handle-filing-reply.ts",
+        "utils/reply-tracker/draft-tracking.ts",
+        "utils/drive/filing-notifications.ts",
+        "utils/follow-up/cleanup.ts",
+        "utils/follow-up/generate-draft.ts",
+        "utils/follow-up/labels.ts",
+        "utils/email/send-notification-email.ts",
+        "utils/messaging/rule-notifications.ts",
+        "utils/reply-tracker/label-helpers.ts",
+      ]),
+    );
+
+    const providerFactory = readFileSync(
+      resolve(root, "utils/email/provider.ts"),
+      "utf8",
+    );
+    expect(providerFactory).toContain("withCoastlineProviderMutationGuard");
+
+    const webhookHistory = readFileSync(
+      resolve(root, "utils/webhook/outlook/process-history.ts"),
+      "utf8",
+    );
+    expect(webhookHistory).toContain("createEmailProvider");
+
+    const directProviderConstructors = findTypeScriptSources(
+      resolve(root, "utils"),
+    ).filter((path) =>
+      /new (?:GmailProvider|OutlookProvider)\(/.test(
+        readFileSync(path, "utf8"),
+      ),
+    );
+    for (const path of directProviderConstructors) {
+      const source = readFileSync(path, "utf8");
+      expect(source, path).toContain("withCoastlineProviderMutationGuard");
     }
   });
 });
