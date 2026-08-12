@@ -487,6 +487,33 @@ Representative edits:
     expect(result.confidence).toBe(DraftReplyConfidence.STANDARD);
   });
 
+  it("keeps an otherwise eligible high-risk incoming matter draftable with a hold marker", async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      object: {
+        reply:
+          "I received the invoice and will review the supporting documents.",
+        confidence: "HIGH",
+      },
+    });
+
+    const params = getDraftParams();
+    const result = await aiDraftReplyWithConfidence({
+      ...params,
+      messages: [
+        {
+          ...params.messages[0],
+          subject: "Invoice approval request",
+          content: "Please approve the attached invoice for payment.",
+        },
+      ],
+    });
+
+    expect(result.confidence).toBe(DraftReplyConfidence.HIGH_CONFIDENCE);
+    expect(result.reply).toBe(
+      "I received the invoice and will review the supporting documents.\n\n[Escalate: Hold for Anthony]",
+    );
+  });
+
   it("returns the actual provider and model used for the successful draft generation", async () => {
     mockCreateGenerateObject.mockImplementationOnce(({ onModelUsed }) =>
       vi.fn().mockImplementationOnce(async () => {
