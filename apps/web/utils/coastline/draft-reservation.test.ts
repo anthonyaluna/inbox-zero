@@ -137,7 +137,7 @@ describe("reserveOrReconcileCoastlineDraft", () => {
         proposal,
         proposalFingerprint: "fingerprint-1",
         client: {
-          getDrafts: vi.fn().mockResolvedValue([]),
+          findCoastlineDraftsByMarker: vi.fn().mockResolvedValue([]),
         } as unknown as EmailProvider,
       }),
     ).resolves.toEqual({
@@ -166,7 +166,7 @@ describe("reserveOrReconcileCoastlineDraft", () => {
         proposal,
         proposalFingerprint: "fingerprint-1",
         client: {
-          getDrafts: vi.fn().mockResolvedValue([]),
+          findCoastlineDraftsByMarker: vi.fn().mockResolvedValue([]),
         } as unknown as EmailProvider,
       }),
     ).resolves.toMatchObject({ state: "recovery_required" });
@@ -300,7 +300,7 @@ describe("reserveOrReconcileCoastlineDraft", () => {
       return { count: 0 };
     });
     const client = {
-      getDrafts: vi.fn().mockResolvedValue([
+      findCoastlineDraftsByMarker: vi.fn().mockResolvedValue([
         {
           id: "draft-1",
           threadId: "thread-1",
@@ -334,5 +334,6 @@ describe("reserveOrReconcileCoastlineDraft", () => {
       draftId: "draft-1",
       state: "created_unverified",
     });
+    expect(client.findCoastlineDraftsByMarker).toHaveBeenCalledTimes(1);
   });
 });

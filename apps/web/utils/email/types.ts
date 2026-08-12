@@ -125,7 +125,9 @@ export interface EmailProvider {
     },
     userEmail: string,
     executedRule?: { id: string; threadId: string; emailAccountId: string },
+    coastlineDraftMarker?: string,
   ): Promise<{ draftId: string }>;
+  findCoastlineDraftsByMarker?(marker: string): Promise<ParsedMessage[]>;
   forwardEmail(
     email: ParsedMessage,
     args: {

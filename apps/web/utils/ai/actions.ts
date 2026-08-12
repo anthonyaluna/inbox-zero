@@ -293,7 +293,9 @@ const draft: ActionFunction<{
 
   if (isCoastlineMicrosoftDraft && !draftArgs.content.trim()) {
     throw Object.assign(
-      new Error("Coastline Microsoft drafts require non-empty proposal content"),
+      new Error(
+        "Coastline Microsoft drafts require non-empty proposal content",
+      ),
       { code: "COASTLINE_DRAFT_PROPOSAL_REQUIRED" },
     );
   }
@@ -328,25 +330,27 @@ const draft: ActionFunction<{
     });
   }
 
-  const createDraft = () =>
+  const createDraft = (coastlineDraftMarker?: string) =>
     client.draftEmail(
       {
-      id: email.id,
-      threadId: email.threadId,
-      headers: email.headers,
-      internalDate: email.internalDate,
-      snippet: "",
-      historyId: "",
-      inline: [],
-      subject: email.headers.subject,
-      date: email.headers.date,
-      labelIds: [],
-      textPlain: email.textPlain,
-      textHtml: email.textHtml,
-      attachments: email.attachments,
-    },
+        id: email.id,
+        threadId: email.threadId,
+        headers: email.headers,
+        internalDate: email.internalDate,
+        snippet: "",
+        historyId: "",
+        inline: [],
+        subject: email.headers.subject,
+        date: email.headers.date,
+        labelIds: [],
+        textPlain: email.textPlain,
+        textHtml: email.textHtml,
+        attachments: email.attachments,
+      },
       draftArgs,
       emailAccount.email,
+      undefined,
+      coastlineDraftMarker,
     );
 
   if (draftProposal) {

@@ -677,6 +677,7 @@ export class OutlookProvider implements EmailProvider {
     },
     userEmail: string,
     executedRule?: { id: string; threadId: string; emailAccountId: string },
+    coastlineDraftMarker?: string,
   ): Promise<{ draftId: string }> {
     if (shouldSkipAutoDraft({ logger: this.logger, source: "microsoft" })) {
       return { draftId: "" };
@@ -690,7 +691,14 @@ export class OutlookProvider implements EmailProvider {
     if (executedRule) {
       // Run draft creation and previous draft deletion in parallel
       const [result] = await Promise.all([
-        draftEmail(this.client, email, args, userEmail, this.logger),
+        draftEmail(
+          this.client,
+          email,
+          args,
+          userEmail,
+          this.logger,
+          coastlineDraftMarker,
+        ),
         handlePreviousDraftDeletion({
           client: this,
           executedRule,
@@ -709,6 +717,7 @@ export class OutlookProvider implements EmailProvider {
         args,
         userEmail,
         this.logger,
+        coastlineDraftMarker,
       );
 
       this.logger.info("Outlook draft created successfully", {
@@ -1405,6 +1414,22 @@ export class OutlookProvider implements EmailProvider {
       .get();
 
     return response.value.map((msg) => convertMessage(msg));
+  }
+
+  async findCoastlineDraftsByMarker(marker: string): Promise<ParsedMessage[]> {
+    const escapedMarker = escapeODataString(marker);
+    const propertyId =
+      "String {00020329-0000-0000-C000-000000000046} Name CoastlineDraftMarker";
+    const escapedPropertyId = escapeODataString(propertyId);
+    const response: { value: Message[] } = await this.client
+      .getClient()
+      .api("/me/mailFolders/drafts/messages")
+      .filter(
+        `singleValueExtendedProperties/Any(ep: ep/id eq '${escapedPropertyId}' and ep/value eq '${escapedMarker}')`,
+      )
+      .select(MESSAGE_SELECT_FIELDS)
+      .get();
+    return response.value.map((message) => convertMessage(message));
   }
 
   async getMessagesBatch(messageIds: string[]): Promise<ParsedMessage[]> {

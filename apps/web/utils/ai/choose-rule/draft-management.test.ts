@@ -37,6 +37,7 @@ vi.mock("@/utils/prisma", () => ({
 
 vi.mock("@/utils/coastline/draft-reservation", () => ({
   reserveOrReconcileCoastlineDraft: vi.fn(),
+  buildCoastlineDraftMarker: vi.fn().mockReturnValue("marker-1"),
   recordCoastlineDraftCreation: vi.fn(),
   reconcileCoastlineDraft: vi.fn(),
   markRecoveryRequired: vi.fn(),
@@ -630,6 +631,7 @@ describe("createOrReconcileCoastlineDraft", () => {
     expect(mockReserve.mock.invocationCallOrder[0]).toBeLessThan(
       createDraft.mock.invocationCallOrder[0],
     );
+    expect(createDraft).toHaveBeenCalledWith("marker-1");
     expect(getDraft).toHaveBeenCalledWith("draft-123");
     expect(result.receipt).toMatchObject({
       draftId: "draft-123",

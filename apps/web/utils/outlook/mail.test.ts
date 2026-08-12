@@ -776,6 +776,51 @@ describe("draftEmail", () => {
       }),
     );
   });
+
+  it("creates a reply-all draft with the Coastline marker in the initial Graph payload", async () => {
+    const createReplyAllDraft = vi.fn(
+      async () => ({ id: "draft-1" }) as Message,
+    );
+    const client = createMockOutlookClient((path) => {
+      if (path === "/me/messages/message-1")
+        return { get: async () => ({ isRead: true }) };
+      if (path === "/me/messages/message-1/createReplyAll")
+        return { post: createReplyAllDraft };
+      if (path === "/me/messages/draft-1")
+        return { patch: async () => ({ id: "draft-1" }) };
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    await draftEmail(
+      client,
+      {
+        id: "message-1",
+        threadId: "conversation-1",
+        headers: {
+          from: "sender@example.com",
+          to: "user@example.com",
+          subject: "Original subject",
+          date: "2026-01-01T12:00:00.000Z",
+        },
+        textPlain: "Original body",
+      } as EmailForAction,
+      { content: "Draft body" },
+      "user@example.com",
+      createTestLogger(),
+      "a".repeat(64),
+    );
+
+    expect(createReplyAllDraft).toHaveBeenCalledWith({
+      message: expect.objectContaining({
+        singleValueExtendedProperties: [
+          {
+            id: "String {00020329-0000-0000-C000-000000000046} Name CoastlineDraftMarker",
+            value: "a".repeat(64),
+          },
+        ],
+      }),
+    });
+  });
 });
 
 function createMockOutlookClient(

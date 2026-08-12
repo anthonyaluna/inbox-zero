@@ -124,9 +124,18 @@ async function recoverProviderDraft({
   draftId: string | null;
   state: ReservationState;
 } | null> {
+  if (!client.findCoastlineDraftsByMarker) {
+    await markRecoveryRequired(
+      reservationId,
+      "COASTLINE_DRAFT_MARKER_CAPABILITY_UNAVAILABLE",
+    );
+    return { reservationId, draftId: null, state: "recovery_required" };
+  }
   let drafts: Awaited<ReturnType<EmailProvider["getDrafts"]>>;
   try {
-    drafts = await client.getDrafts({ maxResults: 100 });
+    drafts = await client.findCoastlineDraftsByMarker(
+      buildCoastlineDraftMarker(proposal),
+    );
   } catch {
     await markRecoveryRequired(
       reservationId,
@@ -311,6 +320,18 @@ export function fingerprintProposal(proposal: InboxZeroDraftProposal) {
         subject: proposal.subject,
         bodyText: proposal.body_text,
       }),
+    )
+    .digest("hex");
+}
+
+export function buildCoastlineDraftMarker(proposal: InboxZeroDraftProposal) {
+  return createHash("sha256")
+    .update(
+      [
+        proposal.account_id,
+        proposal.idempotency_key,
+        fingerprintProposal(proposal),
+      ].join("\u0000"),
     )
     .digest("hex");
 }

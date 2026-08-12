@@ -18,6 +18,7 @@ import {
   recordCoastlineDraftCreation,
   reconcileCoastlineDraft,
   reserveOrReconcileCoastlineDraft,
+  buildCoastlineDraftMarker,
 } from "@/utils/coastline/draft-reservation";
 
 const MAX_RECEIPT_PERSISTENCE_ATTEMPTS = 3;
@@ -198,7 +199,7 @@ export async function createOrReconcileCoastlineDraft({
   actionId: string;
   proposal: InboxZeroDraftProposal;
   client: EmailProvider;
-  createDraft: () => Promise<{ draftId: string }>;
+  createDraft: (marker?: string) => Promise<{ draftId: string }>;
   logger: Logger;
 }): Promise<{ draftId: string; receipt: InboxZeroDraftReceipt }> {
   const reservation = await reserveOrReconcileCoastlineDraft({
@@ -214,7 +215,7 @@ export async function createOrReconcileCoastlineDraft({
   let draftId = reservation.draftId;
 
   if (!draftId) {
-    const createdDraft = await createDraft();
+    const createdDraft = await createDraft(buildCoastlineDraftMarker(proposal));
     draftId = createdDraft.draftId;
     try {
       await recordCoastlineDraftCreation({
