@@ -21,7 +21,13 @@ function Test-SafeStagingUrl {
 
 function Test-BoundedTimestamp {
   param([object]$Value, [DateTimeOffset]$StartedAt, [DateTimeOffset]$Now)
-  try { $parsed = [DateTimeOffset]::Parse([string]$Value) } catch { return $false }
+  if ($Value -is [DateTimeOffset]) {
+    $parsed = $Value
+  } elseif ($Value -is [DateTime]) {
+    $parsed = [DateTimeOffset]$Value
+  } else {
+    try { $parsed = [DateTimeOffset]::Parse([string]$Value) } catch { return $false }
+  }
   return $parsed -ge $StartedAt.AddMinutes(-2) -and $parsed -le $Now.AddMinutes(2)
 }
 
@@ -56,12 +62,14 @@ $checks = [System.Collections.Generic.List[object]]::new()
 $services = [ordered]@{ web = "unverified"; worker = "unverified"; queue = "unverified"; cron_unauthenticated = "unverified"; cron_authenticated = "unverified" }
 $artifactSha = $null
 $workerIdentity = $null
+$workerArtifactSha = $null
+$workerHeartbeatAt = $null
 $queueIdentity = $null
 $cronEvidenceId = $null
 
 try {
   $health = Invoke-WebRequest -Uri "$base/api/health" -Method Get -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
-  $body = $health.Content | ConvertFrom-Json
+  $body = $health.Content | ConvertFrom-Json -DateKind String
   if ($health.StatusCode -ne 200 -or $body.status -notin @("ok", "healthy")) { throw "unhealthy" }
   $services.web = "healthy"
   $checks.Add([pscustomobject]@{ code = "WEB_HEALTH"; status = "pass" })
@@ -84,7 +92,7 @@ try {
 
 try {
   $cron = Invoke-WebRequest -Uri "$base/api/cron/scheduled-actions?coastline_probe=$runNonce" -Method Get -Headers @{ Authorization = "Bearer $cronSecret" } -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
-  $cronBody = $cron.Content | ConvertFrom-Json
+  $cronBody = $cron.Content | ConvertFrom-Json -DateKind String
   if ($cron.StatusCode -ne 200 -or $cronBody.authenticated -ne $true -or $cronBody.runNonce -cne $runNonce -or
     $cronBody.evidenceId -notmatch '^[a-f0-9]{64}$' -or
     -not (Test-BoundedTimestamp $cronBody.observedAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid cron proof" }
@@ -97,17 +105,22 @@ try {
 
 try {
   $evidence = Invoke-WebRequest -Uri "$base/api/coastline/staging-evidence?run_nonce=$runNonce" -Method Get -Headers @{ Authorization = "Bearer $cronSecret" } -MaximumRedirection 0 -TimeoutSec 10 -UseBasicParsing
-  $body = $evidence.Content | ConvertFrom-Json
-  $properties = @($body.PSObject.Properties.Name | Sort-Object) -join ","
-  if ($evidence.StatusCode -ne 200 -or $properties -cne "artifactSha,cronEvidenceId,observedAt,queueIdentity,queueStatus,runNonce,schemaVersion,workerIdentity,workerStatus" -or
+  $body = $evidence.Content | ConvertFrom-Json -DateKind String
+  $expectedProperties = @("artifactSha", "cronEvidenceId", "observedAt", "queueIdentity", "queueStatus", "runNonce", "schemaVersion", "workerArtifactSha", "workerHeartbeatAt", "workerIdentity", "workerStatus")
+  $actualProperties = @($body.PSObject.Properties.Name)
+  $hasExactProperties = $actualProperties.Count -eq $expectedProperties.Count -and @($actualProperties | Where-Object { $_ -notin $expectedProperties }).Count -eq 0
+  if ($evidence.StatusCode -ne 200 -or -not $hasExactProperties -or
     $body.schemaVersion -cne "coastline_inbox_zero_remote_staging_evidence.v1" -or
-    $body.runNonce -cne $runNonce -or $body.artifactSha -cne $protectedSha -or
+    $body.runNonce -cne $runNonce -or $body.artifactSha -cne $protectedSha -or $body.workerArtifactSha -cne $protectedSha -or
     $body.workerStatus -cne "running" -or $body.queueStatus -cne "reachable" -or
     $body.cronEvidenceId -cne $cronEvidenceId -or
     [string]::IsNullOrWhiteSpace($body.workerIdentity) -or [string]::IsNullOrWhiteSpace($body.queueIdentity) -or
-    -not (Test-BoundedTimestamp $body.observedAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid remote evidence" }
+    -not (Test-BoundedTimestamp $body.observedAt $started ([DateTimeOffset]::UtcNow)) -or
+    -not (Test-BoundedTimestamp $body.workerHeartbeatAt $started ([DateTimeOffset]::UtcNow))) { throw "invalid remote evidence" }
   $artifactSha = [string]$body.artifactSha
   $workerIdentity = [string]$body.workerIdentity
+  $workerArtifactSha = [string]$body.workerArtifactSha
+  $workerHeartbeatAt = [string]$body.workerHeartbeatAt
   $queueIdentity = [string]$body.queueIdentity
   $services.worker = "running"
   $services.queue = "reachable"
@@ -126,6 +139,8 @@ $receipt = [ordered]@{
   completed_at = [DateTimeOffset]::UtcNow.ToString("o")
   artifact_sha = $artifactSha
   remote_worker_identity = $workerIdentity
+  worker_artifact_sha = $workerArtifactSha
+  worker_heartbeat_at = $workerHeartbeatAt
   remote_queue_identity = $queueIdentity
   cron_evidence_id = $cronEvidenceId
   service_states = $services

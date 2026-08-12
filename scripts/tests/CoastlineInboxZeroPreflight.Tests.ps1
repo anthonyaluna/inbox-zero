@@ -119,6 +119,7 @@ Describe "Coastline Inbox Zero staging verification" {
     $outputPath = Join-Path $testRoot "receipt.json"
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
     $priorSha = $env:COASTLINE_STAGING_ARTIFACT_SHA
+    $priorProtectedSha = $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA
     $priorSecret = $env:CRON_SECRET
     $artifactSha = "1" * 40
     $readyPath = Join-Path $testRoot "ready"
@@ -153,7 +154,7 @@ Describe "Coastline Inbox Zero staging verification" {
             } elseif ($requestNumber -eq 3) {
               $status = "200 OK"; $body = (@{ authenticated = $true; runNonce = $nonce; evidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
             } else {
-              $status = "200 OK"; $body = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("1" * 40); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
+              $status = "200 OK"; $body = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("1" * 40); workerArtifactSha = ("1" * 40); workerHeartbeatAt = [DateTimeOffset]::UtcNow.ToString("o"); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress)
             }
             $bytes = [Text.Encoding]::UTF8.GetBytes($body)
             $head = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
@@ -165,6 +166,7 @@ Describe "Coastline Inbox Zero staging verification" {
     try {
       for ($attempt = 0; $attempt -lt 50 -and -not (Test-Path $readyPath); $attempt++) { Start-Sleep -Milliseconds 50 }
       $env:COASTLINE_STAGING_ARTIFACT_SHA = $artifactSha
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = $artifactSha
       $env:CRON_SECRET = "secret-sentinel"
       $failure = $null
       try { & $verificationScriptPath -BaseUrl "http://127.0.0.1:$port" -OutputPath $outputPath | Out-Null } catch { $failure = $_ }
@@ -191,6 +193,7 @@ Describe "Coastline Inbox Zero staging verification" {
       Stop-Job $serverJob -ErrorAction SilentlyContinue
       Remove-Job $serverJob -Force -ErrorAction SilentlyContinue
       $env:COASTLINE_STAGING_ARTIFACT_SHA = $priorSha
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = $priorProtectedSha
       $env:CRON_SECRET = $priorSecret
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -201,9 +204,11 @@ Describe "Coastline Inbox Zero staging verification" {
     $outputPath = Join-Path $testRoot "receipt.json"
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
     $priorSha = $env:COASTLINE_STAGING_ARTIFACT_SHA
+    $priorProtectedSha = $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA
     $priorSecret = $env:CRON_SECRET
     try {
       $env:COASTLINE_STAGING_ARTIFACT_SHA = "1" * 40
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = "1" * 40
       $env:CRON_SECRET = "secret-sentinel"
       Mock Invoke-WebRequest {
         param($Uri, $Method, $Headers)
@@ -221,7 +226,7 @@ Describe "Coastline Inbox Zero staging verification" {
         if ($target -like "*/api/cron/*") {
           return [pscustomobject]@{ StatusCode = 200; Content = (@{ authenticated = $true; runNonce = $nonce; evidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress) }
         }
-        return [pscustomobject]@{ StatusCode = 200; Content = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("2" * 40); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress) }
+        return [pscustomobject]@{ StatusCode = 200; Content = (@{ schemaVersion = "coastline_inbox_zero_remote_staging_evidence.v1"; runNonce = $nonce; artifactSha = ("2" * 40); workerArtifactSha = ("2" * 40); workerHeartbeatAt = [DateTimeOffset]::UtcNow.ToString("o"); workerIdentity = "remote-worker-1"; queueIdentity = "remote-queue-1"; workerStatus = "running"; queueStatus = "reachable"; cronEvidenceId = ("c" * 64); observedAt = [DateTimeOffset]::UtcNow.ToString("o") } | ConvertTo-Json -Compress) }
       }
 
       $failure = $null
@@ -234,6 +239,7 @@ Describe "Coastline Inbox Zero staging verification" {
       @($receipt.checks | Where-Object code -eq "REMOTE_ARTIFACT_WORKER_QUEUE").status | Should Be "fail"
     } finally {
       $env:COASTLINE_STAGING_ARTIFACT_SHA = $priorSha
+      $env:COASTLINE_INBOX_ZERO_PROTECTED_SHA = $priorProtectedSha
       $env:CRON_SECRET = $priorSecret
       Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

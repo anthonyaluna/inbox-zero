@@ -31,6 +31,8 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       "queueStatus",
       "runNonce",
       "schemaVersion",
+      "workerArtifactSha",
+      "workerHeartbeatAt",
       "workerIdentity",
       "workerStatus",
     ]);
@@ -42,6 +44,8 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       queueStatus: "reachable",
       runNonce,
       schemaVersion: "coastline_inbox_zero_remote_staging_evidence.v1",
+      workerArtifactSha: PROTECTED_SHA,
+      workerHeartbeatAt: "2026-08-12T16:00:00.000Z",
       workerIdentity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
       workerStatus: "running",
     });
@@ -100,11 +104,25 @@ describe("createCoastlineRemoteStagingEvidence", () => {
     );
   });
 
+  it("rejects a running worker whose immutable artifact does not match the deployed artifact", () => {
+    expect(() =>
+      createValidEvidence({
+        workerRegistrations: [
+          { ...runningWorker(), artifactSha: "2".repeat(40) },
+        ],
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "COASTLINE_STAGING_WORKER_ARTIFACT_MISMATCH" }),
+    );
+  });
+
   it("accepts the unnamed identity emitted by the deployed BullMQ worker", () => {
     const unnamedWorker = {
       identity: "bull:YXV0b21hdGlvbi1qb2Jz",
       queueIdentity: "bullmq:automation-jobs",
       status: "running" as const,
+      artifactSha: PROTECTED_SHA,
+      heartbeatAt: NOW.toISOString(),
     };
 
     expect(
@@ -136,6 +154,7 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           getWorkers: async () => [],
           close: async () => undefined,
         }),
+        workerRegistrations: [runningWorker()],
       }),
     ).rejects.toMatchObject({
       code: "COASTLINE_STAGING_QUEUE_UNREACHABLE",
@@ -148,7 +167,7 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       queueName: "automation-jobs",
       protectedArtifactSha: PROTECTED_SHA,
       deployedArtifactSha: PROTECTED_SHA,
-      createQueueRuntime: () => ({
+        createQueueRuntime: () => ({
         queueName: "automation-jobs",
         waitUntilReady: async () => undefined,
         getWorkers: async () => [
@@ -156,8 +175,9 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           { name: "bull:b3RoZXItcXVldWU=:w:worker-x" },
           { name: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1" },
         ],
-        close: async () => undefined,
-      }),
+          close: async () => undefined,
+        }),
+        workerRegistrations: [runningWorker()],
     });
 
     expect(runtime.workerRegistrations).toEqual([runningWorker()]);
@@ -168,7 +188,7 @@ describe("createCoastlineRemoteStagingEvidence", () => {
       queueName: "automation-jobs",
       protectedArtifactSha: PROTECTED_SHA,
       deployedArtifactSha: PROTECTED_SHA,
-      createQueueRuntime: () => ({
+        createQueueRuntime: () => ({
         queueName: "automation-jobs",
         waitUntilReady: async () => undefined,
         getWorkers: async () => [
@@ -176,8 +196,15 @@ describe("createCoastlineRemoteStagingEvidence", () => {
           { name: "bull:b3RoZXItcXVldWU=" },
           { name: "bull:YXV0b21hdGlvbi1qb2Jz" },
         ],
-        close: async () => undefined,
-      }),
+          close: async () => undefined,
+        }),
+        workerRegistrations: [{
+          identity: "bull:YXV0b21hdGlvbi1qb2Jz",
+          queueIdentity: "bullmq:automation-jobs",
+          status: "running",
+          artifactSha: PROTECTED_SHA,
+          heartbeatAt: NOW.toISOString(),
+        }],
     });
 
     expect(runtime.workerRegistrations).toEqual([
@@ -185,6 +212,8 @@ describe("createCoastlineRemoteStagingEvidence", () => {
         identity: "bull:YXV0b21hdGlvbi1qb2Jz",
         queueIdentity: "bullmq:automation-jobs",
         status: "running",
+        artifactSha: PROTECTED_SHA,
+        heartbeatAt: NOW.toISOString(),
       },
     ]);
   });
@@ -213,5 +242,7 @@ function runningWorker() {
     identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
     queueIdentity: "bullmq:automation-jobs",
     status: "running" as const,
+    artifactSha: PROTECTED_SHA,
+    heartbeatAt: NOW.toISOString(),
   };
 }

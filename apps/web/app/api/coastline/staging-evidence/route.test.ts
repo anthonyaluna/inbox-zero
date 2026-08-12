@@ -84,6 +84,8 @@ describe("GET /api/coastline/staging-evidence", () => {
       "queueStatus",
       "runNonce",
       "schemaVersion",
+      "workerArtifactSha",
+      "workerHeartbeatAt",
       "workerIdentity",
       "workerStatus",
     ]);
@@ -93,6 +95,8 @@ describe("GET /api/coastline/staging-evidence", () => {
       queueStatus: "reachable",
       runNonce: RUN_NONCE,
       workerIdentity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
+      workerArtifactSha: "1".repeat(40),
+      workerHeartbeatAt: NOW.toISOString(),
       workerStatus: "running",
     });
     expect(JSON.stringify(body)).not.toContain("cron-secret");
@@ -158,5 +162,7 @@ function runningWorker() {
     identity: "bull:YXV0b21hdGlvbi1qb2Jz:w:worker-1",
     queueIdentity: "bullmq:automation-jobs",
     status: "running" as const,
+    artifactSha: "1".repeat(40),
+    heartbeatAt: NOW.toISOString(),
   };
 }

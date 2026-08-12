@@ -33,6 +33,21 @@ $requiredVariables = @(
   "COASTLINE_DRAFT_PROPOSALS_ENABLED",
   "NEXT_PUBLIC_EMAIL_SEND_ENABLED"
 )
+$requiredEvidenceVariables = @(
+  "COASTLINE_INBOX_ZERO_PROMOTION_RUN_NONCE",
+  "COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_PATH",
+  "COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_SHA256",
+  "COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH",
+  "COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256",
+  "COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_PATH",
+  "COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_SHA256"
+)
+$contactedSystems = [System.Collections.Generic.List[string]]::new()
+
+function Start-ExternalContact {
+  param([string]$System)
+  if (-not $contactedSystems.Contains($System)) { $contactedSystems.Add($System) }
+}
 
 function Stop-Canary {
   param(
@@ -83,7 +98,7 @@ function Write-BlockedReceipt {
       current_sha = $currentSha
       missing_prerequisites = @($MissingPrerequisites | Sort-Object -Unique)
       observed_at = [DateTimeOffset]::UtcNow.ToString("o")
-      external_systems_touched = @()
+      external_systems_touched = @($contactedSystems | Sort-Object)
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $BlockedReceiptPath -Encoding utf8NoBOM
   } catch {
     # Preserve the primary fail-closed canary error if receipt persistence is unavailable.
@@ -152,12 +167,45 @@ function Assert-ExactProperties {
   }
 }
 
+function Get-ProtectedEvidenceFile {
+  param([string]$Path, [string]$ExpectedHash, [string[]]$ExpectedProperties, [string]$Label)
+  if ([string]::IsNullOrWhiteSpace($Path) -or $ExpectedHash -notmatch '^[a-f0-9]{64}$' -or
+    -not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+    (Resolve-Path -LiteralPath $Path).Path.StartsWith((Resolve-Path -LiteralPath $repoRoot).Path, [StringComparison]::OrdinalIgnoreCase) -or
+    (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedHash) {
+    throw "$Label provenance is invalid."
+  }
+  try {
+    $value = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -DateKind String
+    Assert-ExactProperties -Value $value -Expected $ExpectedProperties -Label $Label
+    return $value
+  } catch { throw "$Label is unreadable or has an invalid schema: $($_.Exception.Message)" }
+}
+
+function Test-FreshEvidenceTimestamp {
+  param([object]$Value)
+  if ($Value -is [DateTimeOffset]) {
+    $time = $Value
+  } elseif ($Value -is [DateTime]) {
+    $time = [DateTimeOffset]$Value
+  } else {
+    if (-not (Test-IsoTimestamp $Value)) { return $false }
+    $time = [DateTimeOffset]::Parse([string]$Value)
+  }
+  $now = [DateTimeOffset]::UtcNow
+  return $time -ge $now.AddMinutes(-30) -and $time -le $now.AddMinutes(2)
+}
+
 function Get-IndependentEvidence {
   param([string]$Base, [string]$Kind, [hashtable]$Headers, [hashtable]$Query)
   $uri = [UriBuilder]::new("$($Base.TrimEnd('/'))/$Kind")
   $uri.Query = (($Query.GetEnumerator() | ForEach-Object {
     "{0}={1}" -f [Uri]::EscapeDataString($_.Key), [Uri]::EscapeDataString([string]$_.Value)
   }) -join "&")
+  Start-ExternalContact -System "independent_verifier"
+  if ($Kind -in @("graph-readback", "idempotency-replay", "no-duplicate")) {
+    Start-ExternalContact -System "microsoft_graph_readback"
+  }
   return Invoke-RestMethod -Uri $uri.Uri -Method Get -Headers $Headers -TimeoutSec 30
 }
 
@@ -243,6 +291,19 @@ if ($scopes.Count -ne 6 -or $values.COASTLINE_MICROSOFT_CANARY_SCOPE_IDENTITY -c
   Stop-Canary -Code "COASTLINE_CANARY_MICROSOFT_SCOPES_MISMATCH" -Message "Protected Microsoft scopes and connected identity must exactly match the draft-only allowlist."
 }
 
+foreach ($name in $requiredEvidenceVariables) {
+  $value = [Environment]::GetEnvironmentVariable($name)
+  if (-not [string]::IsNullOrWhiteSpace($value)) { $values[$name] = $value.Trim() }
+}
+$missingEvidence = @($requiredEvidenceVariables | Where-Object { -not $values.ContainsKey($_) })
+if ($missingEvidence.Count -gt 0) {
+  Stop-Canary -Code $missingPrerequisiteCode -Message "Missing protected evidence prerequisites: $($missingEvidence -join ',')." -MissingPrerequisites $missingEvidence
+}
+$runNonce = $values.COASTLINE_INBOX_ZERO_PROMOTION_RUN_NONCE
+if ($runNonce -notmatch '^[a-f0-9]{32}$') {
+  Stop-Canary -Code "COASTLINE_CANARY_PROMOTION_NONCE_INVALID" -Message "Protected promotion run nonce is invalid."
+}
+
 $registrationPath = $values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_REGISTRATION_PATH
 if (-not (Test-Path -LiteralPath $registrationPath -PathType Leaf) -or
   (Resolve-Path $registrationPath).Path.StartsWith((Resolve-Path $repoRoot).Path, [StringComparison]::OrdinalIgnoreCase) -or
@@ -273,6 +334,41 @@ try {
   Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_PROVENANCE_INVALID" -Message "Protected executor registration did not satisfy the allowlist contract."
 }
 
+try {
+  $protectedEnvironmentEvidence = Get-ProtectedEvidenceFile -Path $values.COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_PATH -ExpectedHash $values.COASTLINE_MICROSOFT_CANARY_PROTECTED_ENV_EVIDENCE_SHA256 -ExpectedProperties @("schema_version", "artifact_sha", "environment_name", "protected", "run_nonce", "observed_at") -Label "Protected environment evidence"
+  $validProtectedEnvironment = ([string]$protectedEnvironmentEvidence.schema_version) -ceq "coastline_inbox_zero_protected_environment_evidence.v1" -and
+    ([string]$protectedEnvironmentEvidence.artifact_sha) -ceq $currentSha -and ([string]$protectedEnvironmentEvidence.environment_name) -ceq "coastline-inbox-zero-staging" -and
+    ([bool]$protectedEnvironmentEvidence.'protected') -eq $true -and ([string]$protectedEnvironmentEvidence.run_nonce) -ceq $runNonce -and
+    (Test-FreshEvidenceTimestamp $protectedEnvironmentEvidence.observed_at)
+  if (-not $validProtectedEnvironment) { throw "Protected environment evidence is not bound to this approved artifact and promotion run." }
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_PROTECTED_ENV_EVIDENCE_INVALID" -Message "Exact current-SHA protected-environment evidence is required before external contact."
+}
+
+try {
+  $stagingEvidence = Get-ProtectedEvidenceFile -Path $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_PATH -ExpectedHash $values.COASTLINE_MICROSOFT_CANARY_STAGING_EVIDENCE_SHA256 -ExpectedProperties @("schema_version", "provenance", "is_loopback", "run_nonce", "started_at", "completed_at", "artifact_sha", "worker_artifact_sha", "remote_worker_identity", "remote_queue_identity", "cron_evidence_id", "service_states", "checks", "outcome") -Label "Remote staging evidence"
+  $validStagingEvidence = $stagingEvidence.schema_version -ceq "coastline_inbox_zero_staging_receipt.v2" -and $stagingEvidence.provenance -ceq "remote_https" -and
+    $stagingEvidence.is_loopback -eq $false -and $stagingEvidence.run_nonce -ceq $runNonce -and
+    $stagingEvidence.artifact_sha -ceq $currentSha -and $stagingEvidence.worker_artifact_sha -ceq $currentSha -and
+    $stagingEvidence.outcome -ceq "pass" -and $stagingEvidence.cron_evidence_id -match '^[a-f0-9]{64}$' -and
+    -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_worker_identity) -and -not [string]::IsNullOrWhiteSpace($stagingEvidence.remote_queue_identity) -and
+    (Test-FreshEvidenceTimestamp $stagingEvidence.completed_at)
+  if (-not $validStagingEvidence) { throw "Remote staging evidence is not a fresh nonce-bound immutable worker-artifact receipt." }
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_STAGING_EVIDENCE_INVALID" -Message "Fresh nonce-bound remote staging evidence is required before external contact."
+}
+
+try {
+  $rollbackControl = Get-ProtectedEvidenceFile -Path $values.COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_PATH -ExpectedHash $values.COASTLINE_MICROSOFT_CANARY_ROLLBACK_CONTROL_SHA256 -ExpectedProperties @("schema_version", "artifact_sha", "run_nonce", "prepared_at", "terminal_state", "disable_draft_proposals", "preserve_mailbox_data", "rollback_artifact_sha") -Label "Rollback control"
+  $validRollbackControl = $rollbackControl.schema_version -ceq "coastline_inbox_zero_rollback_control.v1" -and $rollbackControl.artifact_sha -ceq $currentSha -and
+    $rollbackControl.run_nonce -ceq $runNonce -and $rollbackControl.terminal_state -ceq "prepared" -and
+    $rollbackControl.disable_draft_proposals -eq $true -and $rollbackControl.preserve_mailbox_data -eq $true -and
+    $rollbackControl.rollback_artifact_sha -match '^[a-f0-9]{40}$' -and (Test-FreshEvidenceTimestamp $rollbackControl.prepared_at)
+  if (-not $validRollbackControl) { throw "Rollback control is not bound to this approved artifact and promotion run." }
+} catch {
+  Stop-Canary -Code "COASTLINE_CANARY_ROLLBACK_CONTROL_INVALID" -Message "An explicit no-mailbox-delete rollback control is required before external contact."
+}
+
 $receiptDirectory = $values.COASTLINE_MICROSOFT_CANARY_RECEIPT_DIR
 if (-not (Test-Path -LiteralPath $receiptDirectory -PathType Container) -or
   (Resolve-Path $receiptDirectory).Path.StartsWith((Resolve-Path $repoRoot).Path, [StringComparison]::OrdinalIgnoreCase)) {
@@ -281,7 +377,6 @@ if (-not (Test-Path -LiteralPath $receiptDirectory -PathType Container) -or
 
 $headers = @{ Authorization = "Bearer $($values.COASTLINE_MICROSOFT_CANARY_EXECUTOR_AUTH_TOKEN)"; "X-Coastline-Canary-Executor-Id" = $registration.executorId }
 $runStartedAt = [DateTimeOffset]::UtcNow
-$runNonce = [Guid]::NewGuid().ToString("N")
 $expected = @{
   accountId = $values.COASTLINE_MICROSOFT_CANARY_ACCOUNT_ID
   threadId = $values.COASTLINE_MICROSOFT_CANARY_THREAD_ID
@@ -304,6 +399,7 @@ try {
 
 $payload = [ordered]@{ action = "outlook_draft_create"; provider = "microsoft"; sourceMessageId = $SourceMessageId; testRecipient = $TestRecipient; idempotencyKey = $idempotencyKey; runNonce = $runNonce; draftOnly = $true; externalMessage = $false }
 try {
+  Start-ExternalContact -System "draft_only_executor"
   $response = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
 } catch {
   Stop-Canary -Code "COASTLINE_CANARY_EXECUTOR_UNVERIFIED" -Message "The authenticated draft-only executor did not return a receipt."
@@ -314,6 +410,7 @@ if (-not (Test-OpaqueValue $response.draftId)) {
 $expected.draftId = $response.draftId
 try {
   $evidence["graph-readback"] = Assert-IndependentEvidence -Evidence (Get-IndependentEvidence -Base $registration.independentVerifierBaseUrl -Kind "graph-readback" -Headers $headers -Query $expected) -Kind "graph-readback" -Registration $registration -Expected $expected
+  Start-ExternalContact -System "draft_only_executor"
   $replayResponse = Invoke-RestMethod -Uri $registration.executorUrl -Method Post -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Compress) -TimeoutSec 30
   if (-not (Test-OpaqueValue $replayResponse.draftId) -or $replayResponse.draftId -cne $expected.draftId -or
     $replayResponse.idempotencyReplay -notin @("existing_draft_reconciled", "duplicate_prevented")) {

@@ -15,6 +15,8 @@ type CoastlineWorkerRegistration = {
   identity: string;
   queueIdentity: string;
   status: "running" | "stopped";
+  artifactSha: string;
+  heartbeatAt: string;
 };
 
 type CoastlineQueueRuntime = {
@@ -127,13 +129,23 @@ export function createCoastlineRemoteStagingEvidence({
       (registration) =>
         registration.queueIdentity === queueIdentity &&
         registration.status === "running" &&
+        registration.artifactSha === protectedArtifactSha &&
+        isFreshWorkerHeartbeat(registration.heartbeatAt, observedAt) &&
         isQueueWorkerIdentity(registration.identity, queueIdentity),
     )
     .map((registration) => registration.identity)
     .sort()[0];
   if (!workerIdentity) {
+    const queueWorker = workerRegistrations.find(
+      (registration) =>
+        registration.queueIdentity === queueIdentity &&
+        registration.status === "running" &&
+        isQueueWorkerIdentity(registration.identity, queueIdentity),
+    );
     throw new CoastlineStagingEvidenceError(
-      "COASTLINE_STAGING_WORKER_STOPPED",
+      queueWorker
+        ? "COASTLINE_STAGING_WORKER_ARTIFACT_MISMATCH"
+        : "COASTLINE_STAGING_WORKER_STOPPED",
       503,
     );
   }
@@ -146,9 +158,20 @@ export function createCoastlineRemoteStagingEvidence({
     queueStatus: "reachable" as const,
     runNonce,
     schemaVersion: SCHEMA_VERSION,
+    workerArtifactSha: protectedArtifactSha,
+    workerHeartbeatAt: workerRegistrations.find(
+      (registration) => registration.identity === workerIdentity,
+    )!.heartbeatAt,
     workerIdentity,
     workerStatus: "running" as const,
   };
+}
+
+function isFreshWorkerHeartbeat(heartbeatAt: string, observedAt: Date) {
+  const parsed = new Date(heartbeatAt);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const ageMs = observedAt.getTime() - parsed.getTime();
+  return ageMs <= NONCE_MAX_AGE_MS && ageMs >= -NONCE_FUTURE_TOLERANCE_MS;
 }
 
 function isQueueWorkerIdentity(identity: string, queueIdentity: string) {
@@ -172,12 +195,14 @@ export async function readCoastlineStagingRuntimeBinding({
   deployedArtifactSha = env.COASTLINE_DEPLOYED_ARTIFACT_SHA,
   timeoutMs = DEFAULT_RUNTIME_TIMEOUT_MS,
   createQueueRuntime = createBullMqRuntime,
+  workerRegistrations = readCoastlineWorkerRegistrations(),
 }: {
   queueName?: string;
   protectedArtifactSha?: string;
   deployedArtifactSha?: string;
   timeoutMs?: number;
   createQueueRuntime?: (queueName: string) => CoastlineQueueRuntime;
+  workerRegistrations?: CoastlineWorkerRegistration[];
 } = {}): Promise<CoastlineStagingRuntimeBinding> {
   if (!queueName) {
     throw new CoastlineStagingEvidenceError(
@@ -193,25 +218,23 @@ export async function readCoastlineStagingRuntimeBinding({
       return queue.getWorkers();
     }, timeoutMs);
     const queueIdentity = `bullmq:${queue.queueName}`;
-    const workerRegistrations = workerClients
+    const connectedWorkerIdentities = workerClients
       .map((registration) => registration.name?.trim())
       .filter(
         (identity): identity is string =>
           typeof identity === "string" &&
           isQueueWorkerIdentity(identity, queueIdentity),
       )
-      .map((identity) => ({
-        identity,
-        queueIdentity,
-        status: "running" as const,
-      }));
+    const connectedWorkerSet = new Set(connectedWorkerIdentities);
 
     return {
       protectedArtifactSha,
       deployedArtifactSha,
       queueIdentity,
       queueReachable: true,
-      workerRegistrations,
+      workerRegistrations: workerRegistrations.filter((registration) =>
+        connectedWorkerSet.has(registration.identity),
+      ),
     };
   } catch {
     throw new CoastlineStagingEvidenceError(
@@ -220,6 +243,27 @@ export async function readCoastlineStagingRuntimeBinding({
     );
   } finally {
     await queue.close();
+  }
+}
+
+function readCoastlineWorkerRegistrations(): CoastlineWorkerRegistration[] {
+  const raw = env.COASTLINE_STAGING_WORKER_REGISTRATION_JSON;
+  if (!raw) return [];
+  try {
+    const registrations = JSON.parse(raw);
+    if (!Array.isArray(registrations)) return [];
+    return registrations.filter(
+      (registration): registration is CoastlineWorkerRegistration =>
+        typeof registration === "object" &&
+        registration !== null &&
+        typeof registration.identity === "string" &&
+        typeof registration.queueIdentity === "string" &&
+        (registration.status === "running" || registration.status === "stopped") &&
+        typeof registration.artifactSha === "string" &&
+        typeof registration.heartbeatAt === "string",
+    );
+  } catch {
+    return [];
   }
 }
 
