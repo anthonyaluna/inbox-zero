@@ -9,8 +9,8 @@ description: Evidence-bound promotion decision for Coastline's Microsoft draft-o
 
 **pilot-only**
 
-The current branch has reviewed local hardening through implementation evidence
-base `4de132fb062606e0d0f9eed230757873a3ac939a`, but no protected-environment
+The current branch has reviewed local hardening through the completed mutation,
+recovery, staging-evidence, canary-contract, and readiness waves, but no protected-environment
 configuration receipt, remote staging receipt, dedicated-mailbox Graph canary,
 rollback receipt, or approved pull-request receipt is present. Nothing in this
 record authorizes a deployment, production mailbox, send action, delete action,
@@ -45,11 +45,11 @@ repository.
 
 | Evidence | Current result | Stable reason when absent | Limitation |
 | --- | --- | --- | --- |
-| Current SHA | pass at evaluation time | `CURRENT_SHA_MISMATCH` | The checker emits the exact final `HEAD`; the code evidence base above is the latest implementation commit before this documentation refresh. |
+| Current SHA | pass at evaluation time | `CURRENT_SHA_MISMATCH` | The checker emits and verifies the exact final `HEAD` at evaluation time. |
 | Build | pending final-HEAD receipt | `LOCAL_BUILD_RESULT_MISSING` | A fresh `build:ci` result belongs in the out-of-repository local receipt. |
 | Full unit suite | pending final-HEAD receipt | `LOCAL_FULL_TEST_RESULT_MISSING` | Exact counts must come from the final command output, never an older document. |
 | Integration suite | pending final-HEAD receipt | `LOCAL_INTEGRATION_RESULT_MISSING` | Exact counts must come from the final command output, never an older document. |
-| Pester suite | 32 focused readiness tests passed | `LOCAL_PESTER_RESULT_MISSING` | The focused result is not a full-suite promotion receipt; the final full-suite count remains pending. |
+| Pester suite | pending final-HEAD receipt | `LOCAL_PESTER_RESULT_MISSING` | Focused wave checks are not a full-suite promotion receipt; the final full-suite count belongs in the current-SHA local receipt. |
 | Server-action check | pending current-SHA receipt | `LOCAL_CHECK_SERVER_ACTIONS_RESULT_MISSING` | Required as its own matrix row. |
 | Client-redirect check | pending current-SHA receipt | `LOCAL_CHECK_CLIENT_REDIRECTS_RESULT_MISSING` | Required as its own matrix row. |
 | Test-fixture check | pending current-SHA receipt | `LOCAL_CHECK_TEST_FIXTURES_RESULT_MISSING` | Required as its own matrix row. |
@@ -88,9 +88,10 @@ do not establish or replace it.
   message bodies, subjects, cookies, or raw source-system records.
 - This Task 5 refresh contacted no remote endpoint, Microsoft Graph resource,
   mailbox, GitHub environment, deployment target, or production system.
-- Tasks 1–4 remain draft-only, no-send, and no-delete. Their durable marker
-  recovery, recipient-bucket validation, mutation/scope gates, and remote
-  evidence endpoint are unchanged.
+- Tasks 1–5 and final Waves A–E remain draft-only, no-send, and no-delete. Their
+  durable marker recovery, recipient-bucket validation, global mutation/scope
+  gates, worker-owned staging evidence, exact canary contract, and readiness
+  assembler are covered by the current branch tests.
 - Any supplied remote staging, canary, replay, and rollback receipt must use
   one current promotion nonce. Their fresh timestamps must be ordered from
   remote staging through canary/replay and then rollback. A legacy
