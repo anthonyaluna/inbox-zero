@@ -10,7 +10,7 @@
     "test-integration": "pnpm --filter inbox-zero-ai test-integration",
     "test:packages": "pnpm -r --filter @inbox-zero/api --filter @inbox-zero/cli --filter @inboxzero/image-proxy --filter @inboxzero/image-proxy-aws test",
     "lint": "turbo lint",
-    "postinstall": "sh clone-marketing.sh",
+    "postinstall": "node scripts/clone-marketing.mjs",
     "prepare": "husky install",
     "ncu": "ncu -u -ws",
     "check": "ultracite check",
