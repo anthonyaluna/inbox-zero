@@ -47,8 +47,10 @@ export function withCoastlineProviderMutationGuard(
   emailProvider: EmailProvider,
   {
     coastlineDraftProposalsEnabled = env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    allowOwnedDraftCleanup = false,
   }: {
     coastlineDraftProposalsEnabled?: boolean;
+    allowOwnedDraftCleanup?: boolean;
   } = {},
 ): EmailProvider {
   return new Proxy(emailProvider, {
@@ -63,6 +65,7 @@ export function withCoastlineProviderMutationGuard(
           !isAllowedCoastlineDraftOperation({
             operation,
             provider: target.name,
+            allowOwnedDraftCleanup,
           })
         ) {
           assertCoastlineMutationAllowed({
@@ -81,11 +84,29 @@ export function withCoastlineProviderMutationGuard(
 function isAllowedCoastlineDraftOperation({
   operation,
   provider,
+  allowOwnedDraftCleanup,
 }: {
   operation: string;
   provider: EmailProvider["name"];
+  allowOwnedDraftCleanup: boolean;
 }) {
-  return operation === "draftEmail" && provider === "microsoft";
+  if (provider !== "microsoft") return false;
+  if (operation === "deleteDraft") return allowOwnedDraftCleanup;
+  return new Set([
+    "archiveMessage",
+    "archiveThread",
+    "archiveThreadWithLabel",
+    "blockUnsubscribedEmail",
+    "bulkArchiveFromSenders",
+    "bulkArchiveThreads",
+    "draftEmail",
+    "labelMessage",
+    "markRead",
+    "markReadThread",
+    "moveThreadToFolder",
+    "removeThreadLabel",
+    "removeThreadLabels",
+  ]).has(operation);
 }
 
 function toMutationCode(operation: string) {

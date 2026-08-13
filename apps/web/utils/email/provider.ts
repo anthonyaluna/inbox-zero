@@ -16,10 +16,12 @@ export async function createEmailProvider({
   emailAccountId,
   provider,
   logger,
+  allowOwnedDraftCleanup = false,
 }: {
   emailAccountId: string;
   provider: string;
   logger: Logger;
+  allowOwnedDraftCleanup?: boolean;
 }): Promise<EmailProvider> {
   const rateLimitProvider = toRateLimitProvider(provider);
   if (!rateLimitProvider) throw new Error(`Unsupported provider: ${provider}`);
@@ -38,7 +40,7 @@ export async function createEmailProvider({
         withProviderFailureLogging(
           new GmailProvider(client, logger, emailAccountId),
           { emailAccountId, provider: rateLimitProvider, logger },
-        ),
+        ), { allowOwnedDraftCleanup },
       );
     }
 
@@ -48,7 +50,7 @@ export async function createEmailProvider({
         emailAccountId,
         provider: rateLimitProvider,
         logger,
-      }),
+      }, { allowOwnedDraftCleanup }),
     );
   } catch (error) {
     logger.warn("Failed to create email provider", {

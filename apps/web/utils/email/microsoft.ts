@@ -81,6 +81,7 @@ import {
   getOutlookFolderTree,
 } from "@/utils/outlook/folders";
 import { extractSignatureFromHtml } from "@/utils/email/signature-extraction";
+import { resolveOutlookSignatureColor } from "@/utils/outlook/signature-color";
 import {
   moveMessagesForSenders,
   moveThreadsInBatches,
@@ -97,6 +98,7 @@ export class OutlookProvider implements EmailProvider {
   readonly name = "microsoft";
   private readonly client: OutlookClient;
   private readonly logger: Logger;
+  private lastKnownSignatureColor?: string;
 
   constructor(client: OutlookClient, logger?: Logger) {
     this.client = client;
@@ -688,6 +690,22 @@ export class OutlookProvider implements EmailProvider {
       contentLength: args.content?.length,
     });
 
+    const signature = (await this.getSignatures())[0];
+    const signatureColorEvidence = resolveOutlookSignatureColor({
+      signatureHtml: signature?.signature ?? "",
+      sourceMessageId: "recent-sent-signature",
+      observedAt: new Date(),
+      lastKnownColor: this.lastKnownSignatureColor,
+    });
+    if (signatureColorEvidence.evidenceStatus === "verified") {
+      this.lastKnownSignatureColor = signatureColorEvidence.color;
+    }
+    this.logger.info("Resolved Outlook signature color", {
+      evidenceStatus: signatureColorEvidence.evidenceStatus,
+      signatureSha256: signatureColorEvidence.signatureSha256,
+    });
+    const signatureColor = signatureColorEvidence.color;
+
     if (executedRule) {
       // Run draft creation and previous draft deletion in parallel
       const [result] = await Promise.all([
@@ -698,6 +716,7 @@ export class OutlookProvider implements EmailProvider {
           userEmail,
           this.logger,
           coastlineDraftMarker,
+          signatureColor,
         ),
         handlePreviousDraftDeletion({
           client: this,
@@ -718,6 +737,7 @@ export class OutlookProvider implements EmailProvider {
         userEmail,
         this.logger,
         coastlineDraftMarker,
+        signatureColor,
       );
 
       this.logger.info("Outlook draft created successfully", {

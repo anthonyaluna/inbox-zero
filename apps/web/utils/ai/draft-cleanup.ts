@@ -54,6 +54,7 @@ export async function cleanupAIDraftsForAccount({
     emailAccountId,
     provider: providerName,
     logger,
+    allowOwnedDraftCleanup: true,
   });
 
   let deleted = 0;

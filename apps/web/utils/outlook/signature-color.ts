@@ -22,7 +22,11 @@ export function resolveOutlookSignatureColor({
     sourceMessageId,
     observedAt: observedAt.toISOString(),
     signatureSha256: createHash("sha256").update(signatureHtml).digest("hex"),
-    evidenceStatus: extracted ? ("verified" as const) : ("last_known" as const),
+    evidenceStatus: extracted
+      ? ("verified" as const)
+      : lastKnownColor
+        ? ("last_known" as const)
+        : ("configured_default" as const),
   };
 }
 

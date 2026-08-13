@@ -404,8 +404,13 @@ export async function aiDraftReplyWithConfidence({
     reply: applyCoastlineDraftQa(
       addHighRiskEscalationMarker({
         reply: normalizeDraftReplyFormatting(result.object.reply),
-      latestMessage: messages.at(-1),
+        latestMessage: messages.at(-1),
       }),
+      {
+        requiresEscalation: Boolean(
+          messages.at(-1) && isHighRiskIncomingMatter(messages.at(-1)!),
+        ),
+      },
     ),
     confidence: mapLlmDraftConfidence(result.object.confidence),
     attribution: attributionTracker.attribution,

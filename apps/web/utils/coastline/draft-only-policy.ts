@@ -3,6 +3,20 @@ import { ActionType } from "@/generated/prisma/enums";
 export const COASTLINE_DRAFT_ONLY_POLICY_CODE =
   "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED" as const;
 
+export const COASTLINE_REGISTERED_CAPABILITIES = [
+  "draft_reply",
+  "follow_up_draft",
+  "meeting_recap_draft",
+  "calendar_event",
+  "archive",
+  "unsubscribe_https",
+  "cold_email_classification",
+  "stale_ai_draft_cleanup",
+  "attachment_filing",
+  "teams_assistant",
+  "analytics",
+] as const;
+
 export class CoastlineDraftOnlyPolicyError extends Error {
   readonly code = COASTLINE_DRAFT_ONLY_POLICY_CODE;
   readonly actionType: string;
@@ -22,9 +36,7 @@ const REGISTERED_ACTION_TYPES = new Set<string>([
   ActionType.DRAFT_EMAIL,
   ActionType.DRAFT_MESSAGING_CHANNEL,
   ActionType.NOTIFY_MESSAGING_CHANNEL,
-  ActionType.MARK_SPAM,
   ActionType.MARK_READ,
-  ActionType.STAR,
   ActionType.DIGEST,
   ActionType.MOVE_FOLDER,
 ]);
@@ -35,26 +47,21 @@ const REGISTERED_MUTATIONS = new Set([
   "BULK_ARCHIVE",
   "CHANGE_KEEP_TO_DONE",
   "CLEAN_INBOX",
-  "CREATE_RULE",
-  "DELETE_RULE",
+  "BLOCK_UNSUBSCRIBED_EMAIL",
+  "DELETE_AI_DRAFT",
+  "LABEL_MESSAGE",
   "MARK_NOT_COLD_EMAIL",
   "MARK_READ",
   "MARK_READ_THREAD",
   "MOVE_FOLDER",
   "MOVE_THREAD_TO_FOLDER",
   "REMOVE_COLD_EMAIL_LABEL",
-  "SET_SENDER_STATUS",
   "UNARCHIVE_THREAD",
   "UNDO_CLEAN_INBOX",
   "UNSUBSCRIBE",
-  "UPDATE_RULE",
   "bulkArchive",
   "cleanInbox",
-  "createRule",
-  "deleteRule",
-  "setSenderStatus",
   "unsubscribeSender",
-  "updateRule",
 ]);
 
 const BLOCKED_MUTATIONS = new Set([

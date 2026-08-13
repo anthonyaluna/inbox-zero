@@ -31,8 +31,6 @@ describe("withCoastlineProviderMutationGuard", () => {
     "createLabel",
     "deleteDraft",
     "forwardEmail",
-    "labelMessage",
-    "removeThreadLabel",
     "replyToEmail",
     "sendDraft",
     "sendEmail",
@@ -63,6 +61,20 @@ describe("withCoastlineProviderMutationGuard", () => {
 
       const guarded = withCoastlineProviderMutationGuard(provider);
       await Reflect.get(guarded, operation)("thread-1", "owner@example.com");
+      expect(providerSink).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["labelMessage", "blockUnsubscribedEmail"])(
+    "allows registered %s provider operations in Coastline mode",
+    async (operation) => {
+      const providerSink = vi.fn().mockResolvedValue(undefined);
+      const guarded = withCoastlineProviderMutationGuard({
+        name: "microsoft",
+        [operation]: providerSink,
+      } as unknown as EmailProvider);
+
+      await Reflect.get(guarded, operation)("message-1");
       expect(providerSink).toHaveBeenCalledOnce();
     },
   );

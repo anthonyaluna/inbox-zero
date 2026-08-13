@@ -32,4 +32,14 @@ describe("resolveOutlookSignatureColor", () => {
       evidenceStatus: "last_known",
     });
   });
+
+  it("marks the black fallback as configured rather than verified", () => {
+    expect(
+      resolveOutlookSignatureColor({
+        signatureHtml: "<div>Anthony A. Luna</div>",
+        sourceMessageId: "sent-message-3",
+        observedAt: new Date("2026-08-12T12:02:00.000Z"),
+      }),
+    ).toMatchObject({ color: "#000000", evidenceStatus: "configured_default" });
+  });
 });

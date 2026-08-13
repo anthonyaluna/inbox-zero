@@ -808,10 +808,14 @@ describe("draftEmail", () => {
       "user@example.com",
       createTestLogger(),
       "a".repeat(64),
+      "#0f172a",
     );
 
     expect(createReplyAllDraft).toHaveBeenCalledWith({
       message: expect.objectContaining({
+        body: expect.objectContaining({
+          content: expect.stringContaining("color: #0f172a"),
+        }),
         singleValueExtendedProperties: [
           {
             id: "String {00020329-0000-0000-C000-000000000046} Name CoastlineDraftMarker",

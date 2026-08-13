@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ActionType } from "@/generated/prisma/enums";
 import {
+  COASTLINE_REGISTERED_CAPABILITIES,
   CoastlineDraftOnlyPolicyError,
   assertCoastlineDraftOnlyAction,
   assertCoastlineMutationAllowed,
@@ -8,6 +9,16 @@ import {
 } from "@/utils/coastline/draft-only-policy";
 
 describe("assertCoastlineDraftOnlyAction", () => {
+  it("registers calendar, attachment filing, and owned stale-draft cleanup without send capability", () => {
+    expect(COASTLINE_REGISTERED_CAPABILITIES).toEqual(
+      expect.arrayContaining([
+        "calendar_event",
+        "attachment_filing",
+        "stale_ai_draft_cleanup",
+      ]),
+    );
+    expect(COASTLINE_REGISTERED_CAPABILITIES).not.toContain("send_email");
+  });
   it("allows Microsoft drafts when the Coastline policy is enabled", () => {
     expect(() =>
       assertCoastlineDraftOnlyAction({
@@ -87,7 +98,6 @@ describe("assertCoastlineServerActionAllowed", () => {
     "unsubscribeSender",
     "bulkArchive",
     "cleanInbox",
-    "setSenderStatus",
   ])("allows the registered %s mutation surface in Coastline mode", (actionName) => {
     expect(() =>
       assertCoastlineServerActionAllowed({
@@ -114,6 +124,33 @@ describe("assertCoastlineServerActionAllowed", () => {
         actionType: actionName,
       }),
     );
+  });
+
+  it.each(["createRule", "updateRule", "deleteRule", "markSpam", "starMessage", "setSenderStatus"])(
+    "blocks unrelated %s mutations in Coastline mode",
+    (actionName) => {
+      expect(() =>
+        assertCoastlineServerActionAllowed({
+          actionName,
+          coastlineDraftProposalsEnabled: true,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+          actionType: actionName,
+        }),
+      );
+    },
+  );
+
+  it("allows the owned stale draft cleanup mutation", () => {
+    expect(() =>
+      assertCoastlineMutationAllowed({
+        surface: "ai/draft-cleanup",
+        mutation: "DELETE_AI_DRAFT",
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).not.toThrow();
   });
 
   it("allows registered direct route mutations in Coastline mode", () => {
