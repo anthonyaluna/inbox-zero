@@ -35,23 +35,27 @@ vi.mock("@/env", async (importOriginal) => {
 import prisma from "@/utils/__mocks__/prisma";
 
 describe("assistant chat server action boundary", () => {
-  it(
-    "only exposes authenticated server actions from the action module",
-    async () => {
-      const actions = await import("@/utils/actions/assistant-chat");
+  it("only exposes authenticated server actions from the action module", async () => {
+    const actions = await import("@/utils/actions/assistant-chat");
 
-      expect(actions).toHaveProperty("confirmAssistantEmailAction");
-      expect(actions).toHaveProperty("confirmAssistantCreateRule");
-      expect(actions).toHaveProperty("confirmAssistantSaveMemory");
-      expect(actions).not.toHaveProperty("confirmAssistantEmailActionForAccount");
-      expect(actions).not.toHaveProperty("confirmAssistantCreateRuleForAccount");
-      expect(actions).not.toHaveProperty("confirmAssistantSaveMemoryForAccount");
-    },
-    15_000,
-  );
+    expect(actions).toHaveProperty("confirmAssistantEmailAction");
+    expect(actions).toHaveProperty("confirmAssistantCreateRule");
+    expect(actions).toHaveProperty("confirmAssistantSaveMemory");
+    expect(actions).not.toHaveProperty("confirmAssistantEmailActionForAccount");
+    expect(actions).not.toHaveProperty("confirmAssistantCreateRuleForAccount");
+    expect(actions).not.toHaveProperty("confirmAssistantSaveMemoryForAccount");
+  }, 15_000);
 
-  it("blocks unsubscribe before account lookup or mutation in Coastline mode", async () => {
+  it("allows verified unsubscribe execution in Coastline mode", async () => {
     mocks.coastlineMode = true;
+    prisma.emailAccount.findUnique.mockResolvedValue({
+      email: "owner@example.com",
+      account: { userId: "u1", provider: "microsoft" },
+    } as never);
+    mocks.unsubscribeSenderAndMark.mockResolvedValue({
+      sender: { email: "newsletter@example.com" },
+      unsubscribe: { attempted: true, success: true },
+    });
     const { unsubscribeSenderAction } = await import(
       "@/utils/actions/unsubscriber"
     );
@@ -61,9 +65,12 @@ describe("assistant chat server action boundary", () => {
       unsubscribeLink: "https://example.com/unsubscribe",
     });
 
-    expect(result?.serverError).toContain("Coastline draft-only policy blocked");
-    expect(prisma.emailAccount.findUnique).not.toHaveBeenCalled();
-    expect(mocks.unsubscribeSenderAndMark).not.toHaveBeenCalled();
+    expect(result?.data).toEqual({
+      sender: { email: "newsletter@example.com" },
+      unsubscribe: { attempted: true, success: true },
+    });
+    expect(prisma.emailAccount.findUnique).toHaveBeenCalledOnce();
+    expect(mocks.unsubscribeSenderAndMark).toHaveBeenCalledOnce();
     expect(mocks.setSenderStatusWithAutoArchive).not.toHaveBeenCalled();
   });
 });

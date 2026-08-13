@@ -33,7 +33,9 @@ export class CoastlineDraftOnlyPolicyError extends Error {
   readonly surface?: string;
 
   constructor(actionType: string, surface?: string) {
-    super(`Coastline production policy blocked ${actionType}`);
+    // Keep the stable public message/code for existing route and action
+    // consumers while the policy now covers registered production lanes.
+    super(`Coastline draft-only policy blocked ${actionType}`);
     this.name = "CoastlineDraftOnlyPolicyError";
     this.actionType = actionType;
     this.surface = surface;

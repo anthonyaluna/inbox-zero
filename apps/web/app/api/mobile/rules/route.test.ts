@@ -6,14 +6,11 @@ const mocks = vi.hoisted(() => ({
   aiPromptToRules: vi.fn(),
   createRuleAction: vi.fn(),
   getEmailAccountWithAi: vi.fn(),
+  coastlineEnv: { COASTLINE_DRAFT_PROPOSALS_ENABLED: true },
 }));
 
 vi.mock("@/env", () => ({
-  env: {
-    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
-      return mocks.coastlineMode;
-    },
-  },
+  env: mocks.coastlineEnv,
 }));
 
 vi.mock("@/utils/middleware", () => ({
@@ -59,6 +56,7 @@ describe("POST /api/mobile/rules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.coastlineMode = true;
+    mocks.coastlineEnv.COASTLINE_DRAFT_PROPOSALS_ENABLED = true;
   });
 
   it("rejects before parsing an AI prompt or invoking rule mutation in Coastline mode", async () => {
@@ -76,6 +74,7 @@ describe("POST /api/mobile/rules", () => {
 
   it("preserves rule creation outside Coastline mode", async () => {
     mocks.coastlineMode = false;
+    mocks.coastlineEnv.COASTLINE_DRAFT_PROPOSALS_ENABLED = false;
     mocks.createRuleAction.mockResolvedValue({
       data: { rule: { id: "rule-1", name: "Receipts" } },
     });

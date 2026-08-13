@@ -5,14 +5,11 @@ const mocks = vi.hoisted(() => ({
   coastlineMode: true,
   middlewareCalls: 0,
   unsubscribeSenderAndMark: vi.fn(),
+  coastlineEnv: { COASTLINE_DRAFT_PROPOSALS_ENABLED: true },
 }));
 
 vi.mock("@/env", () => ({
-  env: {
-    get COASTLINE_DRAFT_PROPOSALS_ENABLED() {
-      return mocks.coastlineMode;
-    },
-  },
+  env: mocks.coastlineEnv,
 }));
 
 vi.mock("@/utils/middleware", () => ({
@@ -48,22 +45,30 @@ describe("POST /api/user/senders/unsubscribe", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.coastlineMode = true;
+    mocks.coastlineEnv.COASTLINE_DRAFT_PROPOSALS_ENABLED = true;
     mocks.middlewareCalls = 0;
   });
 
-  it("rejects before middleware, body parsing, or unsubscribe mutation in Coastline mode", async () => {
-    const response = await post("not-json");
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      errorCode: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+  it("allows verified unsubscribe execution in Coastline mode", async () => {
+    mocks.unsubscribeSenderAndMark.mockResolvedValue({
+      sender: { email: "newsletter@example.com" },
+      unsubscribe: { attempted: true, success: true },
     });
-    expect(mocks.middlewareCalls).toBe(0);
-    expect(mocks.unsubscribeSenderAndMark).not.toHaveBeenCalled();
+    const response = await post(
+      JSON.stringify({
+        senderEmail: "newsletter@example.com",
+        unsubscribeLink: "https://example.com/unsubscribe",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.middlewareCalls).toBe(1);
+    expect(mocks.unsubscribeSenderAndMark).toHaveBeenCalledOnce();
   });
 
   it("preserves unsubscribe behavior outside Coastline mode", async () => {
     mocks.coastlineMode = false;
+    mocks.coastlineEnv.COASTLINE_DRAFT_PROPOSALS_ENABLED = false;
     mocks.unsubscribeSenderAndMark.mockResolvedValue({
       sender: { email: "newsletter@example.com" },
       unsubscribe: { attempted: true, success: true },
