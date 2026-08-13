@@ -31,6 +31,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Windows CI/workstations can spend several seconds importing the large
+    // server graph before an individual test starts. Keep the suite strict,
+    // but avoid treating that bounded startup cost as a flaky test failure.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     setupFiles: ["./__tests__/setup.ts"],
     exclude: [...configDefaults.exclude, "__tests__/playwright/**"],
     server: {
