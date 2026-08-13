@@ -404,20 +404,19 @@ export async function aiDraftReplyWithConfidence({
     }
   }
 
+  const normalizedReply = addHighRiskEscalationMarker({
+    reply: normalizeDraftReplyFormatting(result.object.reply),
+    latestMessage: messages.at(-1),
+  });
+
   return {
     reply: env.COASTLINE_DRAFT_PROPOSALS_ENABLED
-      ? applyCoastlineDraftQa(
-          addHighRiskEscalationMarker({
-            reply: normalizeDraftReplyFormatting(result.object.reply),
-            latestMessage: messages.at(-1),
-          }),
-          {
-            requiresEscalation: Boolean(
-              messages.at(-1) && isHighRiskIncomingMatter(messages.at(-1)!),
-            ),
-          },
-        )
-      : normalizeDraftReplyFormatting(result.object.reply),
+      ? applyCoastlineDraftQa(normalizedReply, {
+          requiresEscalation: Boolean(
+            messages.at(-1) && isHighRiskIncomingMatter(messages.at(-1)!),
+          ),
+        })
+      : normalizedReply,
     confidence: mapLlmDraftConfidence(result.object.confidence),
     attribution: attributionTracker.attribution,
   };
