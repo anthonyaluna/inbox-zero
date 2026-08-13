@@ -1,7 +1,10 @@
 import type { ParsedMessage } from "@/utils/types";
 import type { InboxZeroLabel } from "@/utils/label";
 import type { ThreadsQuery } from "@/utils/threads/validation";
-import type { OutlookFolder } from "@/utils/outlook/folders";
+import type {
+  OutlookFolder,
+  OutlookSystemFolder,
+} from "@/utils/outlook/folders";
 import type { Attachment as MailAttachment } from "nodemailer/lib/mailer";
 
 export interface EmailThread {
@@ -29,8 +32,18 @@ export interface EmailLabel {
   messageListVisibility?: string;
   name: string;
   threadsTotal?: number;
+  // Only populated by providers that report per-label counts (Gmail `labels.get`)
+  threadsUnread?: number;
   type: string;
 }
+
+export type EmailFolderCount = {
+  id: string;
+  name: string;
+  total: number;
+  unread: number;
+  systemType?: OutlookSystemFolder;
+};
 
 export interface EmailFilter {
   action?: {
@@ -155,6 +168,7 @@ export interface EmailProvider {
   getDraft(draftId: string): Promise<ParsedMessage | null>;
   getDrafts(options?: { maxResults?: number }): Promise<ParsedMessage[]>;
   getFiltersList(): Promise<EmailFilter[]>;
+  getFolderCounts(): Promise<EmailFolderCount[]>;
   getFolders(): Promise<OutlookFolder[]>;
   getInboxMessages(maxResults?: number): Promise<ParsedMessage[]>;
   getInboxStats(): Promise<{ total: number; unread: number }>;
@@ -245,6 +259,7 @@ export interface EmailProvider {
     query?: ThreadsQuery;
     maxResults?: number;
     pageToken?: string;
+    messageFormat?: "full" | "metadata";
   }): Promise<{
     threads: EmailThread[];
     nextPageToken?: string;

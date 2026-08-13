@@ -49,11 +49,12 @@ describe("syncMcpTools", () => {
     });
   });
 
-  it("filters write tools using readOnlyHint, falling back to the name heuristic", async () => {
+  it("only syncs Pipedream tools that both declare and look read-only", async () => {
     mockConnection([], "pipedream");
     mockListMcpTools.mockResolvedValue([
       { name: "slack_v2-list-channels" },
-      { name: "slack_v2-send-message" },
+      { name: "slack_v2-list-users", readOnlyHint: true },
+      { name: "slack_v2-send-message", readOnlyHint: true },
       { name: "custom_read_tool", readOnlyHint: true },
       { name: "app-list-archived-items", readOnlyHint: false },
     ]);
@@ -63,11 +64,28 @@ describe("syncMcpTools", () => {
     expect(prisma.mcpTool.createMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
-          name: "slack_v2-list-channels",
-          isEnabled: true,
+          name: "slack_v2-list-users",
+          isEnabled: false,
         }),
+      ],
+    });
+  });
+
+  it("preserves explicitly enabled Pipedream tools during resync", async () => {
+    mockConnection(
+      [{ name: "slack_v2-list-users", isEnabled: true }],
+      "pipedream",
+    );
+    mockListMcpTools.mockResolvedValue([
+      { name: "slack_v2-list-users", readOnlyHint: true },
+    ]);
+
+    await syncMcpTools("pipedream", "email-account-1", logger);
+
+    expect(prisma.mcpTool.createMany).toHaveBeenCalledWith({
+      data: [
         expect.objectContaining({
-          name: "custom_read_tool",
+          name: "slack_v2-list-users",
           isEnabled: true,
         }),
       ],
@@ -78,6 +96,42 @@ describe("syncMcpTools", () => {
     await expect(
       syncMcpTools("unknown-integration", "email-account-1", logger),
     ).rejects.toThrow("Unknown integration");
+  });
+
+  it("syncs configured write tools with isWrite and no read tools for todoist", async () => {
+    mockConnection([], "todoist");
+    mockListMcpTools.mockResolvedValue([
+      { name: "add-tasks", description: "add tasks" },
+      { name: "find-tasks", description: "find tasks" },
+      { name: "find-projects", description: "find projects" },
+    ]);
+
+    await syncMcpTools("todoist", "email-account-1", logger);
+
+    expect(prisma.mcpTool.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          name: "add-tasks",
+          isWrite: true,
+          isEnabled: true,
+        }),
+      ],
+    });
+  });
+
+  it("keeps read tools isWrite false", async () => {
+    mockConnection([]);
+    mockListMcpTools.mockResolvedValue([
+      { name: "notion-search", description: "search" },
+    ]);
+
+    await syncMcpTools("notion", "email-account-1", logger);
+
+    expect(prisma.mcpTool.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ name: "notion-search", isWrite: false }),
+      ],
+    });
   });
 });
 

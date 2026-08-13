@@ -23,7 +23,10 @@ function ContentWrapper({ children }: { children: React.ReactNode }) {
   const isRightSidebarOpen =
     !isAssistantRoute && state.includes("chat-sidebar");
 
-  const noTopPadding = isAssistantRoute;
+  // The padding only exists to clear the fixed MobileHeader, which neither of
+  // these routes renders — on mail it showed up as a blank strip above the
+  // screen's own sidebar and toolbar.
+  const noTopPadding = isAssistantRoute || isMailRoute;
 
   return (
     <div
@@ -53,15 +56,19 @@ function ContentWrapper({ children }: { children: React.ReactNode }) {
 export function SideNavWithTopNav({
   children,
   defaultOpen,
+  feedbackEnabled,
 }: {
   children: React.ReactNode;
   defaultOpen: boolean;
+  feedbackEnabled: boolean;
 }) {
   const pathname = usePathname();
 
   if (!pathname) return null;
 
   const isAssistantRoute = pathname.includes("/assistant");
+  // The mail screen ships its own sidebar, so this one would be a second copy.
+  const isMailRoute = pathname.includes("/mail");
 
   // Ugly code. May change the onboarding path later so we don't need to do this.
   // Only return children for the onboarding or onboarding-brief pages: /[emailAccountId]/onboarding or /[emailAccountId]/onboarding-brief
@@ -77,8 +84,15 @@ export function SideNavWithTopNav({
       defaultOpen={defaultOpen ? ["left-sidebar"] : []}
       sidebarNames={["left-sidebar", "chat-sidebar"]}
     >
-      <MobileHeader />
-      <SideNav name="left-sidebar" />
+      {/* Both are suppressed together: the trigger only opens SideNav, so
+          leaving it on the mail route would render a button that opens an
+          empty drawer. */}
+      {!isMailRoute && (
+        <>
+          <MobileHeader />
+          <SideNav name="left-sidebar" feedbackEnabled={feedbackEnabled} />
+        </>
+      )}
       <ContentWrapper>{children}</ContentWrapper>
       {!isAssistantRoute ? <SidebarRight name="chat-sidebar" /> : null}
     </SidebarProvider>

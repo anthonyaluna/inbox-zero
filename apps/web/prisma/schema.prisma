@@ -102,8 +102,8 @@ model User {
   emailAccounts EmailAccount[]
 
   // Referral relationships
-  referralsMade    Referral[]     @relation("ReferrerUser")
-  referralReceived Referral?      @relation("ReferredUser")
+  referralsMade    Referral[]        @relation("ReferrerUser")
+  referralReceived Referral?         @relation("ReferredUser")
   scimProviders    ScimProvider[]
   mobilePushTokens MobilePushToken[]
 }
@@ -156,6 +156,8 @@ model EmailAccount {
   draftCleanupDays          Int?                 @default(14)
   allowHiddenAiDraftLinks   Boolean              @default(false)
   rulesRevision             Int                  @default(0)
+
+  mailLayout MailLayout @default(LIST)
 
   meetingBriefingsEnabled       Boolean @default(false)
   meetingBriefingsMinutesBefore Int     @default(240) // 4 hours in minutes
@@ -220,12 +222,31 @@ model EmailAccount {
   filingFolders          FilingFolder[]
   apiKeys                ApiKey[]
   classificationFeedback ClassificationFeedback[]
+  mailSplits             MailSplit[]
 
   @@index([userId])
   @@index([lastSummaryEmailAt])
   @@index([lastInboxHealthEmailAt])
   @@index([watchEmailsSubscriptionId])
   @@index([watchEmailsSubscriptionHistory(ops: JsonbPathOps)], type: Gin)
+}
+
+// A saved filter shown as a tab above the mail list. `value` holds the label id for
+// LABEL splits and the provider category for CATEGORY splits; it is unused for INBOX/UNREAD.
+model MailSplit {
+  id        String        @id @default(cuid())
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  name      String
+  kind      MailSplitKind
+  value     String?
+  order     Int
+
+  emailAccountId String
+  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([emailAccountId, name])
+  @@unique([emailAccountId, order])
 }
 
 model Organization {
@@ -619,11 +640,14 @@ model Action {
   to                String?
   cc                String?
   bcc               String?
-  url               String?
-  folderName        String?
-  folderId          String?
-  delayInMinutes    Int?
-  staticAttachments Json? // AttachmentSourceInput[] — explicit files to attach for email actions
+  url                 String?
+  folderName          String?
+  folderId            String?
+  delayInMinutes      Int?
+  staticAttachments   Json? // AttachmentSourceInput[] — explicit files to attach for email actions
+  integrationName     String?
+  integrationToolName String?
+  integrationArgs     Json? // Tool args; string values may contain {{AI instructions}} templates
 
   @@index([ruleId])
   @@index([emailAccountId])
@@ -720,6 +744,9 @@ model ExecutedAction {
   folderId            String?
   staticAttachments   Json? // AttachmentSourceInput[] — explicit files to attach for email actions
   selectedAttachments Json? // SelectedAttachment[] — AI-selected files for this specific execution
+  integrationName     String?
+  integrationToolName String?
+  integrationArgs     Json? // Resolved tool args used for this execution
 
   // additional fields as a result of the action
   draftId              String? // Gmail draft ID created by DRAFT_EMAIL action
@@ -1232,8 +1259,8 @@ model ChatMessage {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  role  String
-  parts Json
+  role     String
+  parts    Json
   metadata Json?
   // attachments Json?
 
@@ -1458,27 +1485,27 @@ model MeetingRecording {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  botProvider          String   @default("recall")
+  botProvider           String    @default("recall")
   // Null between claiming the row and the provider call returning.
-  externalBotId        String?
+  externalBotId         String?
   // Last display name successfully sent to the provider.
-  botName              String?
+  botName               String?
   // Set when the provider reports the recording is ready.
-  externalRecordingId  String?
+  externalRecordingId   String?
   // Claim for the create-transcript call, kept separate from the id above so a
   // failed call does not have to choose between losing the recording id and
   // losing the claim. The sweep retries a claim that goes stale.
   transcriptRequestedAt DateTime?
-  externalTranscriptId String?
+  externalTranscriptId  String?
   // Raw join URL including credentials (Zoom pwd etc.) - what the bot joins with.
-  meetingUrl           String
+  meetingUrl            String
   // Dedup key only, never sent to the provider.
-  normalizedMeetingUrl String
+  normalizedMeetingUrl  String
   // Account-scoped normalizedMeetingUrl while the recording can still be
   // scheduled, and cleared once it reaches a terminal state. Account scoping
   // prevents a calendar link from becoming cross-tenant transcript access.
-  activeKey            String?
-  meetingStartTime     DateTime
+  activeKey             String?
+  meetingStartTime      DateTime
 
   status              MeetingRecordingStatus @default(PENDING)
   failureReason       String?
@@ -1844,6 +1871,7 @@ model McpTool {
   description String?
   schema      Json?
   isEnabled   Boolean @default(true)
+  isWrite     Boolean @default(false) // Write tools only run inside rule actions, never in agents
 
   connectionId String
   connection   McpConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -1902,10 +1930,10 @@ enum ActionType {
   DIGEST
   MOVE_FOLDER
   NOTIFY_SENDER // Sends notification from Inbox Zero (not user's email). Only for cold email rules.
+  INTEGRATION
   // SUMMARIZE
   // SNOOZE
   // ADD_TO_DO
-  // INTEGRATION // for example, add to Notion
 }
 
 enum MessagingMessageStatus {
@@ -1923,6 +1951,18 @@ enum Frequency {
   WEEKLY
   // MONTHLY
   // ANNUALLY
+}
+
+enum MailLayout {
+  LIST
+  SPLIT
+}
+
+enum MailSplitKind {
+  INBOX
+  UNREAD
+  LABEL
+  CATEGORY
 }
 
 enum DraftReplyConfidence {

@@ -156,7 +156,7 @@ describe("OutlookProvider.getSentMessageIds", () => {
     });
 
     expect(client.getRequestLog()).toContainEqual({
-      apiPath: "/me/mailFolders('sentitems')/messages",
+      apiPath: "/me/mailFolders/sentitems/messages",
       filter:
         "sentDateTime ge 2026-03-31T12:00:00.000Z and sentDateTime le 2026-04-30T17:00:00.000Z",
     });
@@ -168,6 +168,53 @@ describe("OutlookProvider.getSentMessageIds", () => {
 });
 
 describe("OutlookProvider.getThreadsWithQuery", () => {
+  it("omits message bodies from metadata list requests", async () => {
+    const client = createMockOutlookClient([
+      createMessage({ id: "message-1", conversationId: "thread-1" }),
+    ]);
+    const provider = new OutlookProvider(client);
+
+    await provider.getThreadsWithQuery({ messageFormat: "metadata" });
+
+    expect(client.getSelectLog()[0]).toContain("bodyPreview");
+    expect(client.getSelectLog()[0]?.split(",")).not.toContain("body");
+  });
+
+  it.each([
+    "focused",
+    "other",
+  ] as const)("queries the Outlook inbox's %s section", async (inboxSection) => {
+    const client = createMockOutlookClient([
+      createMessage({ id: `${inboxSection}-message` }),
+    ]);
+    const provider = new OutlookProvider(client);
+
+    await provider.getThreadsWithQuery({
+      query: { type: "inbox", inboxSection },
+    });
+
+    expect(client.getRequestLog()[0]).toEqual({
+      apiPath: "/me/mailFolders/inbox/messages",
+      filter: `inferenceClassification eq '${inboxSection}'`,
+    });
+  });
+
+  it("does not apply an inbox section filter to a custom folder", async () => {
+    const client = createMockOutlookClient([
+      createMessage({ id: "folder-message" }),
+    ]);
+    const provider = new OutlookProvider(client);
+
+    await provider.getThreadsWithQuery({
+      query: { folderId: "custom-folder", inboxSection: "focused" },
+    });
+
+    expect(client.getRequestLog()[0]).toEqual({
+      apiPath: "/me/mailFolders/custom-folder/messages",
+      filter: undefined,
+    });
+  });
+
   it("filters returned threads by explicit labelIds", async () => {
     getFolderIdsMock.mockResolvedValue({
       inbox: "folder-inbox",
@@ -779,6 +826,7 @@ function createMockOutlookClient(
   let categoryMapCache = options?.categoryMapCache ?? null;
   let folderIdCache = options?.folderIdCache ?? null;
   const requestLog: Array<{ apiPath: string; filter?: string }> = [];
+  const selectLog: string[] = [];
 
   return {
     getClient: () => ({
@@ -794,7 +842,10 @@ function createMockOutlookClient(
             searchValue = value;
             return request;
           },
-          select: () => request,
+          select: (value: string) => {
+            selectLog.push(value);
+            return request;
+          },
           expand: () => request,
           top: () => request,
           orderby: () => request,
@@ -823,6 +874,7 @@ function createMockOutlookClient(
       folderIdCache = value;
     },
     getRequestLog: () => requestLog,
+    getSelectLog: () => selectLog,
   } as any;
 }
 

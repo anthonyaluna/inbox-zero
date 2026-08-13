@@ -19,6 +19,7 @@ async function getData(emailAccountId: string) {
       isActive: true,
       integration: { select: { id: true, name: true } },
       tools: {
+        where: { isWrite: false },
         select: { id: true, name: true, description: true, isEnabled: true },
       },
     },
@@ -28,6 +29,7 @@ async function getData(emailAccountId: string) {
     name: integration.name,
     displayName: integration.displayName,
     shortName: integration.shortName,
+    description: integration.description,
     url: integration.url,
     comingSoon: integration.comingSoon,
     authType: integration.authType,

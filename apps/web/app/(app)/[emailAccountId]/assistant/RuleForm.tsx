@@ -82,6 +82,7 @@ import type { GetMessagingChannelsResponse } from "@/app/api/user/messaging-chan
 import { usePremium } from "@/hooks/usePremium";
 import { hasTierAccess } from "@/utils/premium";
 import { UpgradeToPlusButton } from "@/components/UpgradeToPlusButton";
+import { useIntegrationActionsEnabled } from "@/hooks/useFeatureFlags";
 import { getConnectedRuleNotificationChannels } from "@/utils/messaging/routes";
 import { sortActionsByPriority } from "@/utils/action-sort";
 import {
@@ -132,6 +133,7 @@ export function RuleForm({
   onCancel?: () => void;
 }) {
   const { emailAccountId, provider } = useAccount();
+  const integrationActionsEnabled = useIntegrationActionsEnabled();
   const { tier, isLoading: isLoadingPremium } = usePremium();
   const hasDigestAccess = hasTierAccess({
     tier,
@@ -397,8 +399,11 @@ export function RuleForm({
         formState.errors?.actions?.[index]?.url?.root?.message ||
         formState.errors?.actions?.[index]?.labelId?.root?.message ||
         formState.errors?.actions?.[index]?.to?.root?.message ||
-        formState.errors?.actions?.[index]?.messagingChannelId?.message;
-      if (actionError) actionErrors.push(actionError);
+        formState.errors?.actions?.[index]?.messagingChannelId?.message ||
+        formState.errors?.actions?.[index]?.integrationArgs?.message ||
+        formState.errors?.actions?.[index]?.integrationArgs?.root?.message;
+      // react-hook-form widens a nested record's message to string | FieldError
+      if (typeof actionError === "string") actionErrors.push(actionError);
     });
     return actionErrors;
   }, [formState, watch]);
@@ -425,11 +430,18 @@ export function RuleForm({
         labelActionText: terminology.label.action,
         systemType: rule.systemType,
         existingActionTypes,
+        integrationActionsEnabled,
       }).map((option) => ({
         ...option,
         icon: getActionIcon(option.value),
       })),
-    [existingActionTypes, provider, terminology.label.action, rule.systemType],
+    [
+      existingActionTypes,
+      integrationActionsEnabled,
+      provider,
+      terminology.label.action,
+      rule.systemType,
+    ],
   );
 
   const [isNameEditMode, setIsNameEditMode] = useState(alwaysEditMode);
@@ -935,6 +947,7 @@ function getRuleEditorActions(actions: CreateRuleBody["actions"]) {
 type ActionTypeOption = {
   label: string;
   value: ActionType;
+  dividerBefore?: boolean;
 };
 
 export function getRuleActionTypeOptions({
@@ -942,11 +955,13 @@ export function getRuleActionTypeOptions({
   labelActionText,
   systemType,
   existingActionTypes,
+  integrationActionsEnabled,
 }: {
   provider: string;
   labelActionText: string;
   systemType: SystemType | null | undefined;
   existingActionTypes: ActionType[];
+  integrationActionsEnabled: boolean;
 }): ActionTypeOption[] {
   const availableActions = new Set(
     getAvailableActionsForRuleEditor({
@@ -954,7 +969,12 @@ export function getRuleActionTypeOptions({
       existingActionTypes,
     }),
   );
-  const extraActions = new Set(getExtraAvailableActionsForRuleEditor());
+  const extraActions = new Set(
+    getExtraAvailableActionsForRuleEditor({
+      existingActionTypes,
+      integrationActionsEnabled,
+    }),
+  );
 
   return [
     {
@@ -1031,6 +1051,15 @@ export function getRuleActionTypeOptions({
           {
             label: ACTION_TYPE_LABELS[ActionType.CALL_WEBHOOK],
             value: ActionType.CALL_WEBHOOK,
+          },
+        ]
+      : []),
+    ...(extraActions.has(ActionType.INTEGRATION)
+      ? [
+          {
+            label: ACTION_TYPE_LABELS[ActionType.INTEGRATION],
+            value: ActionType.INTEGRATION,
+            dividerBefore: true,
           },
         ]
       : []),

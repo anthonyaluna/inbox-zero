@@ -244,10 +244,13 @@ const bottomMailLinks: NavItem[] = [
   },
 ];
 
-export function SideNav({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function SideNav({
+  feedbackEnabled,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & { feedbackEnabled: boolean }) {
   const navigation = useNavigation();
   const path = usePathname();
-  const showMailNav = path.includes("/mail") || path.includes("/compose");
+  const showMailNav = path.includes("/compose");
   const isMoreActive = navigation.moreItems.some(
     (item) => path === item.href || path.startsWith(`${item.href}/`),
   );
@@ -340,11 +343,13 @@ export function SideNav({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter className="pb-4">
         <SideNavMenu items={visibleBottomLinks} activeHref={path} />
 
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <FeedbackDialog />
-          </SidebarMenuItem>
-        </SidebarMenu>
+        {feedbackEnabled && (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <FeedbackDialog />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
 
         <NavUser />
       </SidebarFooter>
@@ -398,13 +403,15 @@ function MailNav({ path }: { path: string }) {
           activeHref={path}
         />
       </SidebarGroup>
-      <SidebarGroup>
-        <SidebarGroupLabel>Categories</SidebarGroupLabel>
-        <SideNavMenu
-          items={markActiveType(bottomMailLinks, activeType)}
-          activeHref={path}
-        />
-      </SidebarGroup>
+      {isGoogleProvider(provider) && (
+        <SidebarGroup>
+          <SidebarGroupLabel>Categories</SidebarGroupLabel>
+          <SideNavMenu
+            items={markActiveType(bottomMailLinks, activeType)}
+            activeHref={path}
+          />
+        </SidebarGroup>
+      )}
 
       <SidebarGroup>
         <SidebarGroupLabel>
