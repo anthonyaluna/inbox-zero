@@ -72,7 +72,8 @@ export const sameDayResponseCaseSchema = z.object({
   draftId: z.string().nullable(),
   followUpId: z.string().nullable(),
   responseMessageId: z.string().nullable(),
-  respondedAt: isoDateTimeSchema.nullable(),
+  // Default keeps contracts written before response timestamps were added readable.
+  respondedAt: isoDateTimeSchema.nullable().default(null),
   commitments: z.array(commitmentSchema),
   escalation: z.string().nullable(),
   terminalEvidence: z.record(z.string(), z.string()).nullable(),
