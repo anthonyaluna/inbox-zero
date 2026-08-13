@@ -2,6 +2,7 @@ import { sendColdEmailNotification as sendColdEmailNotificationViaResend } from 
 import { env } from "@/env";
 import type { Logger } from "@/utils/logger";
 import { formatReplySubject } from "@/utils/email/subject";
+import { CoastlineDraftOnlyPolicyError } from "@/utils/coastline/draft-only-policy";
 
 export async function sendColdEmailNotification({
   senderEmail,
@@ -16,6 +17,20 @@ export async function sendColdEmailNotification({
   originalMessageId?: string; // Message-ID of the original email for threading
   logger: Logger;
 }): Promise<{ success: boolean; error?: string }> {
+  if (env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
+    logger.info("Coastline policy skipped outbound cold-email notification", {
+      senderEmail,
+      originalMessageId,
+    });
+    return {
+      success: false,
+      error: new CoastlineDraftOnlyPolicyError(
+        "SEND_COLD_EMAIL_NOTIFICATION",
+        "cold-email/send-notification",
+      ).code,
+    };
+  }
+
   if (!env.RESEND_API_KEY) {
     logger.warn("Resend not configured, skipping cold email notification");
     return { success: false, error: "Resend not configured" };
