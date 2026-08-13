@@ -9,6 +9,25 @@ Inbox Zero is the application runtime for Coastline's internal **Same-Day
 Response System**. Coastline Agentic OS supplies the source context, routing,
 Plaud adapter, and operating evidence.
 
+## Repository boundary
+
+This application intentionally remains separate from Coastline Agentic OS.
+
+- This repository owns response matters, deadlines, drafting, follow-ups,
+  calendar attendee-event execution, registered mailbox actions, and the
+  Same-Day Response dashboard.
+- Coastline Agentic OS owns source adapters, Plaud and Fyxer integration,
+  routing, authority policy, credential references, recovery, and cross-system
+  receipts.
+- AppFolio, Microsoft 365, SharePoint, OneDrive, Teams, and Plaud remain the
+  authoritative source systems for their respective facts.
+- The repositories communicate through versioned, sanitized contracts for
+  matter context, Plaud evidence, draft proposals, action proposals, and
+  execution receipts. Inbox Zero must not reach raw Plaud MCP, AppFolio,
+  SharePoint, OneDrive, Teams, or OS credential stores directly.
+- No third commercial repository is created at this stage. Productization can
+  be evaluated later without changing this internal boundary.
+
 The system manages a response matter from receipt through verified closure. A
 same-day response does not promise same-day resolution. It promises that a
 legitimate message received Monday through Friday from 8:00 AM through 5:00 PM
