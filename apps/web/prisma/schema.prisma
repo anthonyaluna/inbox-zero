@@ -223,12 +223,41 @@ model EmailAccount {
   apiKeys                ApiKey[]
   classificationFeedback ClassificationFeedback[]
   mailSplits             MailSplit[]
+  sameDayResponseCases   SameDayResponseCase[]
 
   @@index([userId])
   @@index([lastSummaryEmailAt])
   @@index([lastInboxHealthEmailAt])
   @@index([watchEmailsSubscriptionId])
   @@index([watchEmailsSubscriptionHistory(ops: JsonbPathOps)], type: Gin)
+}
+
+model SameDayResponseCase {
+  id                  String   @id @default(cuid())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  matterId            String
+  schemaVersion       String
+  sourceMessageId     String
+  sourceThreadId      String
+  state               String
+  responseDeadlineAt  DateTime
+  nextUpdateAt        DateTime?
+  accountableOwner    String
+  nextAction          String
+  draftId             String?
+  followUpId          String?
+  responseMessageId   String?
+  respondedAt         DateTime?
+  contract            Json
+
+  emailAccountId String
+  emailAccount   EmailAccount @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([emailAccountId, matterId])
+  @@index([emailAccountId, state, responseDeadlineAt])
+  @@index([responseDeadlineAt, state])
+  @@index([respondedAt])
 }
 
 // A saved filter shown as a tab above the mail list. `value` holds the label id for

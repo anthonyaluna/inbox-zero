@@ -105,6 +105,27 @@ describe("classifyCalendarContext", () => {
     );
   });
 
+  it("blocks calendar mutation when the context broker reports a material conflict", () => {
+    const result = classifyCalendarContext({
+      message: baseMessage(),
+      accountId: "account-1",
+      accountEmail: "anthony@example.com",
+      defaultTimezone: "America/Los_Angeles",
+      matterContext: {
+        schema: "coastline.matter_context_packet.v1",
+        status: "conflict",
+        source_authority: "appfolio",
+        conflicts: ["material_conflict"],
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "conflicting",
+      reason: "matter_context_conflict",
+    });
+    expect(result.proposal).toBeUndefined();
+  });
+
   it("does not dispatch when an exact scheduling fact is missing", () => {
     const result = classifyCalendarContext({
       message: baseMessage({

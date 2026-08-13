@@ -1,4 +1,5 @@
 import { runActionFunction } from "@/utils/ai/actions";
+import { env } from "@/env";
 import prisma from "@/utils/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import {
@@ -27,6 +28,11 @@ import {
 } from "@/utils/coastline/draft-proposal";
 import { dispatchCalendarForMessage } from "@/utils/coastline/calendar-context-dispatch";
 import type { CalendarMatterContextLoader } from "@/utils/coastline/calendar-matter-context-loader";
+import {
+  createPrismaSameDayResponseCaseStore,
+  markSameDayResponseCaseDrafted,
+  type SameDayResponseCaseStore,
+} from "@/utils/coastline/same-day-response-case-store";
 
 const MODULE = "ai-execute-act";
 
@@ -47,6 +53,7 @@ export async function executeAct({
   message,
   logger,
   calendarMatterContextLoader,
+  sameDayResponseCaseStore,
 }: {
   client: EmailProvider;
   executedRule: ExecutedRuleWithActionItems;
@@ -54,6 +61,7 @@ export async function executeAct({
   emailAccount: ActionExecutionEmailAccount;
   logger: Logger;
   calendarMatterContextLoader?: CalendarMatterContextLoader;
+  sameDayResponseCaseStore?: SameDayResponseCaseStore;
 }): Promise<ExecutedRuleStatus> {
   const log = logger.with({
     module: MODULE,
@@ -80,6 +88,11 @@ export async function executeAct({
   }
 
   const actionFailures: ActionFailure[] = [];
+  const responseCaseStore =
+    sameDayResponseCaseStore ??
+    (env.COASTLINE_DRAFT_PROPOSALS_ENABLED
+      ? createPrismaSameDayResponseCaseStore()
+      : undefined);
 
   for (const action of executedRule.actionItems) {
     try {
@@ -175,6 +188,15 @@ export async function executeAct({
               new Error("Coastline draft did not return a verified receipt"),
               { code: "COASTLINE_DRAFT_VERIFICATION_REQUIRED" },
             );
+          }
+          if (responseCaseStore && draftId) {
+            await markSameDayResponseCaseDrafted({
+              store: responseCaseStore,
+              accountId: emailAccount.id,
+              sourceThreadId: message.threadId,
+              sourceMessageId: message.id,
+              draftId,
+            });
           }
         }
       }

@@ -279,10 +279,12 @@ export async function draftEmail(
   logger: Logger,
   coastlineDraftMarker?: string,
   outlookSignatureColor?: string,
+  outlookSignatureHtml?: string,
 ) {
   const { html } = createOutlookReplyContent({
     textContent: args.content,
     textColor: outlookSignatureColor,
+    signatureHtml: outlookSignatureHtml,
     message: originalEmail,
   });
 

@@ -12,6 +12,9 @@ import {
   buildDraftIdempotencyKey,
   createInboxZeroDraftProposal,
 } from "@/utils/coastline/draft-proposal";
+import { createSameDayResponseCase } from "@/utils/coastline/same-day-response-case";
+import type { SameDayResponseCaseV1 } from "@/utils/coastline/same-day-response-case";
+import type { SameDayResponseCaseStore } from "@/utils/coastline/same-day-response-case-store";
 
 const { envMock } = vi.hoisted(() => ({
   envMock: {
@@ -480,6 +483,84 @@ describe("executeAct", () => {
     expect(mockExecutedActionUpdate).toHaveBeenCalledWith({
       where: { id: "action-1" },
       data: expect.objectContaining({ executionStatus: "SUCCEEDED" }),
+    });
+  });
+
+  it("moves the response case to drafted after verified draft readback", async () => {
+    mockRunActionFunction.mockResolvedValueOnce({
+      draftId: "draft-123",
+      draftProposal: createInboxZeroDraftProposal({
+        provider: "microsoft",
+        account_id: "email-account-1",
+        thread_id: "thread-id-1",
+        source_message_id: "message-id-1",
+        to: ["recipient@example.com"],
+        cc: [],
+        bcc: [],
+        subject: "Subject excluded from receipt",
+        body_text: "Body excluded from receipt",
+        confidence: "medium",
+        model: "test-model",
+        idempotency_key: buildDraftIdempotencyKey({
+          accountId: "email-account-1",
+          threadId: "thread-id-1",
+          sourceMessageId: "message-id-1",
+        }),
+        generated_at: "2026-08-11T12:00:00.000Z",
+      }),
+      draftReceipt: {
+        schemaVersion: "inbox_zero_draft_receipt.v1",
+        provider: "microsoft",
+        accountId: "email-account-1",
+        threadId: "thread-id-1",
+        sourceMessageId: "message-id-1",
+        idempotencyKey:
+          "inbox-zero/draft/email-account-1/thread-id-1/message-id-1",
+        draftId: "draft-123",
+        generatedAt: "2026-08-11T12:00:00.000Z",
+        readBackAt: "2026-08-11T12:00:01.000Z",
+        terminalState: "created_verified",
+      },
+    });
+    const rows = new Map<string, SameDayResponseCaseV1>();
+    const initialCase = createSameDayResponseCase({
+      accountId: "email-account-1",
+      sourceMessageId: "message-id-1",
+      sourceThreadId: "thread-id-1",
+      sender: "sender@example.com",
+      recipients: { to: ["recipient@example.com"], cc: [], bcc: [] },
+      matterType: "inbound_message",
+      audience: "other",
+      receivedAt: "2026-08-11T12:00:00.000Z",
+      accountableOwner: "Coastline Equity",
+      nextAction: "Draft a response",
+    });
+    rows.set(initialCase.matterId, initialCase);
+    const sameDayResponseCaseStore: SameDayResponseCaseStore = {
+      async upsert(responseCase) {
+        rows.set(responseCase.matterId, responseCase);
+        return responseCase;
+      },
+      async findUnique({ matterId }) {
+        return rows.get(matterId) ?? null;
+      },
+    };
+
+    await executeAct({
+      client: mockClient,
+      executedRule: {
+        ...baseExecutedRule,
+        actionItems: [{ id: "action-1", type: ActionType.DRAFT_EMAIL }],
+      } as any,
+      message,
+      emailAccount,
+      logger,
+      sameDayResponseCaseStore,
+    });
+
+    expect(rows.get(initialCase.matterId)).toMatchObject({
+      state: "drafted",
+      draftId: "draft-123",
     });
   });
 

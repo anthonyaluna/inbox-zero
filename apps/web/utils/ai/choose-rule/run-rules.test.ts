@@ -29,6 +29,8 @@ import { getActionItemsWithAiArgs } from "@/utils/ai/choose-rule/choose-args";
 import { executeAct } from "@/utils/ai/choose-rule/execute";
 import { determineConversationStatus } from "@/utils/reply-tracker/handle-conversation-status";
 import { isDraftReplyActionType } from "@/utils/actions/draft-reply";
+import type { SameDayResponseCaseV1 } from "@/utils/coastline/same-day-response-case";
+import type { SameDayResponseCaseStore } from "@/utils/coastline/same-day-response-case-store";
 
 const logger = createTestLogger();
 
@@ -401,6 +403,46 @@ describe("ensureConversationRuleForAiCalendarMatch", () => {
 describe("runRules draft attribution persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("creates a same-day response case before executing a legitimate inbound message", async () => {
+    const rows = new Map<string, SameDayResponseCaseV1>();
+    const sameDayResponseCaseStore: SameDayResponseCaseStore = {
+      async upsert(responseCase) {
+        rows.set(responseCase.matterId, responseCase);
+        return responseCase;
+      },
+      async findUnique({ matterId }) {
+        return rows.get(matterId) ?? null;
+      },
+    };
+    const draftRule = createRule("draft-rule", SystemType.TO_REPLY, [
+      getAction({ id: "draft-action-1", type: ActionType.DRAFT_EMAIL }),
+    ]);
+
+    mockMatchingRules([{ rule: draftRule, matchReasons: [] }]);
+    prisma.executedRule.findFirst.mockResolvedValue(null);
+    vi.mocked(getActionItemsWithAiArgs).mockResolvedValue([
+      getAction({
+        id: "draft-action-1",
+        type: ActionType.DRAFT_EMAIL,
+        content: "Generated draft content",
+      }) as any,
+    ]);
+    mockExecutedRuleCreate({ rule: draftRule });
+
+    await runRulesWithDefaults({
+      rules: [draftRule],
+      sameDayResponseCaseStore,
+    });
+
+    expect([...rows.values()]).toEqual([
+      expect.objectContaining({
+        state: "response_due",
+        sourceMessageId: "message-1",
+        sourceThreadId: threadId,
+      }),
+    ]);
   });
 
   it("persists generated draft attribution on executed draft actions", async () => {

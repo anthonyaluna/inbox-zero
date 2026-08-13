@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { env } from "@/env";
 import type { ParsedMessage, RuleWithActions } from "@/utils/types";
 import {
   ActionType,
@@ -56,6 +57,11 @@ import {
   isMessagingDraftActionType,
 } from "@/utils/actions/draft-reply";
 import type { CalendarMatterContextLoader } from "@/utils/coastline/calendar-matter-context-loader";
+import {
+  createPrismaSameDayResponseCaseStore,
+  ensureSameDayResponseCaseForMessage,
+  type SameDayResponseCaseStore,
+} from "@/utils/coastline/same-day-response-case-store";
 
 const MODULE = "ai/choose-rule";
 
@@ -111,6 +117,7 @@ export async function runRules({
   logger,
   skipArchive,
   calendarMatterContextLoader,
+  sameDayResponseCaseStore,
 }: {
   provider: EmailProvider;
   message: ParsedMessage;
@@ -121,8 +128,31 @@ export async function runRules({
   logger: Logger;
   skipArchive?: boolean;
   calendarMatterContextLoader?: CalendarMatterContextLoader;
+  sameDayResponseCaseStore?: SameDayResponseCaseStore;
 }): Promise<RunRulesResult[]> {
   const batchTimestamp = new Date(); // Single timestamp for this batch execution
+  const responseCaseStore =
+    sameDayResponseCaseStore ??
+    (env.COASTLINE_DRAFT_PROPOSALS_ENABLED
+      ? createPrismaSameDayResponseCaseStore()
+      : undefined);
+  if (responseCaseStore) {
+    try {
+      await ensureSameDayResponseCaseForMessage({
+        store: responseCaseStore,
+        accountId: emailAccount.id,
+        accountEmail: emailAccount.email,
+        timezone: emailAccount.timezone,
+        holidays: getConfiguredResponseHolidays(),
+        message,
+      });
+    } catch (error) {
+      logger.warn("Same-Day Response case persistence failed", {
+        error: error instanceof Error ? error.message : error,
+        sourceMessageId: message.id,
+      });
+    }
+  }
   const { regularRules, conversationRules } = prepareRulesWithMetaRule(rules);
 
   const results = await findMatchingRules({
@@ -264,6 +294,7 @@ export async function runRules({
       logger,
       skipArchive,
       calendarMatterContextLoader,
+      responseCaseStore,
     );
 
     executedRules.push({
@@ -277,6 +308,13 @@ export async function runRules({
   }
 
   return executedRules;
+}
+
+function getConfiguredResponseHolidays() {
+  return (env.COASTLINE_RESPONSE_HOLIDAYS ?? "")
+    .split(",")
+    .map((holiday) => holiday.trim())
+    .filter((holiday) => /^\d{4}-\d{2}-\d{2}$/.test(holiday));
 }
 
 function prepareRulesWithMetaRule(rules: RuleWithActions[]): {
@@ -379,6 +417,7 @@ async function executeMatchedRule(
   logger: Logger,
   skipArchive?: boolean,
   calendarMatterContextLoader?: CalendarMatterContextLoader,
+  responseCaseStore?: SameDayResponseCaseStore,
 ) {
   const blockedActionTypes = getBlockedLowTrustStaticFromActionTypes(
     rule.from,
@@ -608,6 +647,9 @@ async function executeMatchedRule(
         executedRule,
         message,
         ...(calendarMatterContextLoader ? { calendarMatterContextLoader } : {}),
+        ...(responseCaseStore
+          ? { sameDayResponseCaseStore: responseCaseStore }
+          : {}),
       });
     }
   }

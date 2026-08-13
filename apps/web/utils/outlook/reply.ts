@@ -14,11 +14,13 @@ export const createOutlookReplyContent = ({
   textContent,
   htmlContent,
   textColor = "#000000",
+  signatureHtml,
   message,
 }: {
   textContent?: string;
   htmlContent?: string;
   textColor?: string;
+  signatureHtml?: string;
   message: Pick<ParsedMessage, "headers" | "textPlain" | "textHtml">;
 }): {
   html: string;
@@ -33,8 +35,14 @@ export const createOutlookReplyContent = ({
 
   // Format plain text version with proper quoting
   const quotedContent = quotePlainTextContent(message.textPlain);
+  const safeSignature = signatureHtml
+    ? sanitizeStandaloneSignatureHtml(signatureHtml)
+    : "";
+  const signatureText = safeSignature ? load(safeSignature).text().trim() : "";
   const plainText = buildQuotedPlainText({
-    textContent,
+    textContent: signatureText
+      ? `${textContent ?? ""}\n\n${signatureText}`
+      : textContent,
     quotedHeader,
     quotedContent,
   });
@@ -51,17 +59,24 @@ export const createOutlookReplyContent = ({
     ? textColor.toLowerCase()
     : "#000000";
   const outlookFontStyle = `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${verifiedTextColor};`;
+  const signatureBlock = safeSignature
+    ? `<div style="${outlookFontStyle} margin-top: 14px;">${safeSignature}</div>`
+    : "";
 
   // Format HTML version with Outlook-style formatting
-  const html =
-    `<div ${dirAttribute} style="${outlookFontStyle}">${contentHtml}</div>
-<br>
-<div style="border-top: 1px solid #e1e1e1; padding-top: 10px; margin-top: 10px;">
+  const html = [
+    `<div ${dirAttribute} style="${outlookFontStyle}">${contentHtml}</div>`,
+    ...(signatureBlock ? [signatureBlock] : []),
+    "<br>",
+    `<div style="border-top: 1px solid #e1e1e1; padding-top: 10px; margin-top: 10px;">
   <div ${dirAttribute} style="font-size: 11pt; color: rgb(0, 0, 0);">${escapeHtml(quotedHeader)}<br></div>
   <div style="margin-top: 10px;">
     ${messageContent}
   </div>
-</div>`.trim();
+</div>`,
+  ]
+    .join("\n")
+    .trim();
 
   return {
     text: plainText,

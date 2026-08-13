@@ -1,9 +1,9 @@
 ---
-title: Inbox Zero promotion evidence contract
-description: Machine-checkable evidence and protected-environment requirements for Coastline's Microsoft draft-only lane.
+title: Same-Day Response System promotion evidence contract
+description: Machine-checkable evidence and protected-environment requirements for Coastline's internal response, calendar, and mailbox lanes.
 ---
 
-# Inbox Zero promotion evidence contract
+# Same-Day Response System promotion evidence contract
 
 `scripts/Assert-CoastlineInboxZeroReadiness.ps1` is the promotion freshness
 checker. It accepts only sanitized JSON receipts stored outside the repository

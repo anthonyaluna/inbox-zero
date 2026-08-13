@@ -1,11 +1,12 @@
 ---
-title: Coastline Inbox Zero runtime
-description: One-stack Azure runtime contract for Coastline registered Inbox Zero capabilities.
+title: The Same-Day Response System runtime
+description: One-stack Azure runtime contract for Coastline's internal Same-Day Response System.
 ---
 
-# Coastline Inbox Zero runtime
+# The Same-Day Response System runtime
 
-The single Azure-hosted Coastline runtime is enabled with
+The single Azure-hosted Coastline runtime is the application runtime for The
+Same-Day Response System. It is enabled with
 `COASTLINE_DRAFT_PROPOSALS_ENABLED=true`. Registered capabilities may draft,
 organize, file attachments, unsubscribe through verified HTTPS links, create
 calendar events, and create Teams actions. They execute through their existing
@@ -28,7 +29,7 @@ Before the first live use, run one dedicated canary mailbox through the Azure
 runtime. Record the deployed artifact identifier, exact target, idempotency
 replay, provider readback, and correction path in the existing receipt store.
 This is a one-time proof exercise, not an ongoing reviewer or SHA approval
-gate. Do not claim this canary or a production deployment occurred without its
+gate. Do not claim this canary or a production promotion occurred without its
 external receipt.
 
 Environment protection records the branch, current artifact, required
@@ -52,6 +53,6 @@ itself available for investigation and recovery.
 ## Local validation
 
 Local tests and builds never contact Microsoft 365. Run focused Vitest tests,
-TypeScript checks, and `git diff --check` before deployment. A local pass is
-diagnostic evidence only; the one-time Azure canary receipt is the proof of a
-live provider write and readback.
+the CI-aligned build, Prisma validation, and `git diff --check` before
+deployment. A local pass is diagnostic evidence only; the one-time Azure
+canary receipt is the proof of a live provider write and readback.

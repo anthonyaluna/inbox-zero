@@ -88,6 +88,20 @@ export function classifyCalendarContext({
   };
   const body = getMessageText(message);
 
+  if (
+    matterMetadata.conflicts.some((conflict) =>
+      ["material_conflict", "conflicting_facts", "schedule_conflict"].includes(
+        conflict,
+      ),
+    )
+  ) {
+    return {
+      ...base,
+      status: "conflicting",
+      reason: "matter_context_conflict",
+    };
+  }
+
   if (isCalendarInvite(message)) {
     return {
       ...base,
@@ -171,7 +185,9 @@ function getMatterContextMetadata(matterContext?: MatterContextPacketV1) {
     return { sourceAuthorities: [], conflicts: [] };
   }
 
-  const sourceAuthority = normalizeMetadataValue(matterContext.source_authority);
+  const sourceAuthority = normalizeMetadataValue(
+    matterContext.source_authority,
+  );
   const conflicts = (matterContext.conflicts ?? [])
     .map(normalizeMetadataValue)
     .filter((value): value is string => Boolean(value));

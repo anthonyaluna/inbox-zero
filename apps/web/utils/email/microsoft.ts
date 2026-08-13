@@ -745,6 +745,7 @@ export class OutlookProvider implements EmailProvider {
           this.logger,
           coastlineDraftMarker,
           signatureColor,
+          signature?.signature,
         ),
         handlePreviousDraftDeletion({
           client: this,
@@ -766,6 +767,7 @@ export class OutlookProvider implements EmailProvider {
         this.logger,
         coastlineDraftMarker,
         signatureColor,
+        signature?.signature,
       );
 
       this.logger.info("Outlook draft created successfully", {

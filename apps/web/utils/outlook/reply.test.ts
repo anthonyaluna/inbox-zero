@@ -188,6 +188,32 @@ describe("Outlook email formatting", () => {
     expect(text).toContain("Anthony A. Luna");
   });
 
+  it("places the sanitized automatic signature after the reply and before quoted history", () => {
+    const { html, text } = createOutlookReplyContent({
+      textContent: "Thanks for the update.",
+      signatureHtml: '<p>Anthony A. Luna</p><script>alert("unsafe")</script>',
+      message: {
+        headers: {
+          date: "2025-02-06",
+          from: "sender@example.com",
+          subject: "S",
+          to: "anthony@example.com",
+        },
+        textPlain: "Original message",
+        textHtml: "<p>Original message</p>",
+      },
+    });
+
+    expect(html.indexOf("Anthony A. Luna")).toBeGreaterThan(
+      html.indexOf("Thanks for the update."),
+    );
+    expect(html.indexOf("Anthony A. Luna")).toBeLessThan(
+      html.indexOf("Original message"),
+    );
+    expect(html).not.toContain("<script>");
+    expect(text).toContain("Anthony A. Luna");
+  });
+
   it("formats reply email correctly for RTL content with Outlook styling", () => {
     const textContent = "שלום, מה שלומך?"; // "Hello, how are you?" in Hebrew
     const message: Pick<ParsedMessage, "headers" | "textPlain" | "textHtml"> = {

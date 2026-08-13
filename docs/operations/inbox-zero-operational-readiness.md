@@ -1,9 +1,9 @@
 ---
-title: Inbox Zero operational readiness
-description: Evidence-bound promotion decision for Coastline's Microsoft draft-only pilot.
+title: Same-Day Response System operational readiness
+description: Evidence-bound promotion decision for Coastline's internal Same-Day Response System.
 ---
 
-# Inbox Zero operational readiness
+# Same-Day Response System operational readiness
 
 ## Decision
 

@@ -90,6 +90,7 @@ const parsedEnv = createEnv({
     MICROSOFT_TENANT_ID: z.string().optional().default("common"),
     // Local Coastline integration only; validates draft proposals after Microsoft draft creation.
     COASTLINE_DRAFT_PROPOSALS_ENABLED: booleanString.optional().default(false),
+    COASTLINE_RESPONSE_HOLIDAYS: z.string().optional(),
     COASTLINE_STAGING_QUEUE_NAME: z.string().min(1).optional(),
     COASTLINE_STAGING_ARTIFACT_SHA: z
       .string()
