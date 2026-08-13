@@ -55,6 +55,7 @@ import {
   isMessagingChannelActionType,
   isMessagingDraftActionType,
 } from "@/utils/actions/draft-reply";
+import type { CalendarMatterContextLoader } from "@/utils/coastline/calendar-matter-context-loader";
 
 const MODULE = "ai/choose-rule";
 
@@ -109,6 +110,7 @@ export async function runRules({
   modelType,
   logger,
   skipArchive,
+  calendarMatterContextLoader,
 }: {
   provider: EmailProvider;
   message: ParsedMessage;
@@ -118,6 +120,7 @@ export async function runRules({
   modelType: ModelType;
   logger: Logger;
   skipArchive?: boolean;
+  calendarMatterContextLoader?: CalendarMatterContextLoader;
 }): Promise<RunRulesResult[]> {
   const batchTimestamp = new Date(); // Single timestamp for this batch execution
   const { regularRules, conversationRules } = prepareRulesWithMetaRule(rules);
@@ -260,6 +263,7 @@ export async function runRules({
       batchTimestamp,
       logger,
       skipArchive,
+      calendarMatterContextLoader,
     );
 
     executedRules.push({
@@ -374,6 +378,7 @@ async function executeMatchedRule(
   batchTimestamp: Date,
   logger: Logger,
   skipArchive?: boolean,
+  calendarMatterContextLoader?: CalendarMatterContextLoader,
 ) {
   const blockedActionTypes = getBlockedLowTrustStaticFromActionTypes(
     rule.from,
@@ -584,8 +589,9 @@ async function executeMatchedRule(
       });
     }
 
-    // Execute immediate actions if any
-    if (immediateActions?.length > 0) {
+    // executeAct also owns Coastline calendar classification. Run it for every
+    // completed match, including a match that produced no mailbox actions.
+    if (immediateActions?.length > 0 || !delayedActions?.length) {
       finalStatus = await executeAct({
         client,
         emailAccount: {
@@ -597,18 +603,8 @@ async function executeMatchedRule(
         logger,
         executedRule,
         message,
+        ...(calendarMatterContextLoader ? { calendarMatterContextLoader } : {}),
       });
-    } else if (!delayedActions?.length) {
-      // No actions at all (neither immediate nor delayed), mark as applied
-      await withPrismaRetry(
-        () =>
-          prisma.executedRule.update({
-            where: { id: executedRule.id },
-            data: { status: ExecutedRuleStatus.APPLIED },
-          }),
-        { logger },
-      );
-      finalStatus = ExecutedRuleStatus.APPLIED;
     }
   }
 

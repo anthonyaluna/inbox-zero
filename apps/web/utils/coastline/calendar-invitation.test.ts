@@ -29,6 +29,7 @@ describe("Coastline calendar invitations", () => {
       reserve: vi.fn().mockResolvedValue({
         reservationId: "reservation-1",
         state: "create",
+        creationClaimId: "claim-1",
       }),
       complete: vi.fn(),
       fail: vi.fn(),
@@ -123,6 +124,7 @@ describe("Coastline calendar invitations", () => {
       reserve: vi.fn().mockResolvedValue({
         reservationId: "reservation-1",
         state: "create",
+        creationClaimId: "claim-1",
       }),
       complete: vi.fn(),
       fail: vi.fn(),
@@ -155,8 +157,44 @@ describe("Coastline calendar invitations", () => {
     expect(reservations.complete).not.toHaveBeenCalled();
     expect(reservations.fail).toHaveBeenCalledWith({
       reservationId: "reservation-1",
+      creationClaimId: "claim-1",
       recoverableErrorCode: "COASTLINE_CALENDAR_READBACK_FAILED",
     });
+  });
+
+  it("fails closed when Graph readback changes the timezone", async () => {
+    const proposal = createCoastlineCalendarInvitationProposal(proposalInput);
+    const reservations = {
+      reserve: vi.fn().mockResolvedValue({
+        reservationId: "reservation-1",
+        state: "create",
+        creationClaimId: "claim-1",
+      }),
+      complete: vi.fn(),
+      fail: vi.fn(),
+    };
+    const provider = {
+      createAttendeeEvent: vi.fn().mockResolvedValue({
+        eventId: "event-1",
+        providerCalendarId: "calendar-1",
+        providerConnectionId: "connection-1",
+      }),
+      readEvent: vi.fn().mockResolvedValue({
+        id: "event-1",
+        title: proposal.title,
+        startAt: proposal.startAt,
+        endAt: proposal.endAt,
+        timezone: "UTC",
+        location: proposal.location,
+        attendees: proposal.attendees,
+      }),
+    };
+
+    await expect(
+      executeCoastlineCalendarInvitation({ proposal, provider, reservations }),
+    ).rejects.toMatchObject({ code: "COASTLINE_CALENDAR_READBACK_FAILED" });
+
+    expect(reservations.complete).not.toHaveBeenCalled();
   });
 
   it("replays a verified reservation without creating a duplicate event", async () => {

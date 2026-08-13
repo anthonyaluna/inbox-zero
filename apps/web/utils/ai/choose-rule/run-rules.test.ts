@@ -681,6 +681,31 @@ describe("runRules draft attribution persistence", () => {
 
     expect(results[0]?.status).toBe(ExecutedRuleStatus.APPLIED);
   });
+
+  it("runs the real rule execution path for a matched rule with zero immediate actions", async () => {
+    const calendarRule = createRule("calendar-rule");
+    const calendarMatterContextLoader = vi.fn();
+    mockMatchingRules([{ rule: calendarRule, matchReasons: [] }]);
+    mockExecutedRuleCreate({ rule: calendarRule, actionItems: [] });
+    vi.mocked(executeAct).mockResolvedValue(ExecutedRuleStatus.APPLIED);
+
+    const results = await runRulesWithDefaults({
+      rules: [calendarRule],
+      calendarMatterContextLoader,
+    });
+
+    expect(executeAct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client: expect.anything(),
+        executedRule: expect.objectContaining({
+          actionItems: [],
+          ruleId: "calendar-rule",
+        }),
+        calendarMatterContextLoader,
+      }),
+    );
+    expect(results[0]?.status).toBe(ExecutedRuleStatus.APPLIED);
+  });
 });
 
 describe("runRules outbound guardrails", () => {

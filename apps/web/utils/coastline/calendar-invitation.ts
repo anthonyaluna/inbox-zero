@@ -73,7 +73,7 @@ export type CoastlineCalendarInvitationReservationStore = {
     proposal: CoastlineCalendarInvitationProposal;
     proposalFingerprint: string;
   }) => Promise<
-    | { reservationId: string; state: "create" }
+    | { reservationId: string; state: "create"; creationClaimId: string }
     | {
         reservationId: string;
         state: "existing";
@@ -84,6 +84,7 @@ export type CoastlineCalendarInvitationReservationStore = {
   >;
   complete: (input: {
     reservationId: string;
+    creationClaimId: string;
     eventId: string;
     providerCalendarId: string;
     providerConnectionId: string;
@@ -91,6 +92,7 @@ export type CoastlineCalendarInvitationReservationStore = {
   }) => Promise<void>;
   fail: (input: {
     reservationId: string;
+    creationClaimId?: string;
     recoverableErrorCode: "COASTLINE_CALENDAR_READBACK_FAILED";
   }) => Promise<void>;
 };
@@ -180,6 +182,10 @@ export async function executeCoastlineCalendarInvitation({
   ) {
     await reservations.fail({
       reservationId: reservation.reservationId,
+      creationClaimId:
+        reservation.state === "create"
+          ? reservation.creationClaimId
+          : undefined,
       recoverableErrorCode: "COASTLINE_CALENDAR_READBACK_FAILED",
     });
     throw coastlineCalendarError(
@@ -188,13 +194,16 @@ export async function executeCoastlineCalendarInvitation({
     );
   }
 
-  await reservations.complete({
-    reservationId: reservation.reservationId,
-    eventId: created.eventId,
-    providerCalendarId: created.providerCalendarId,
-    providerConnectionId: created.providerConnectionId,
-    terminalState: "created_verified",
-  });
+  if (reservation.state === "create") {
+    await reservations.complete({
+      reservationId: reservation.reservationId,
+      creationClaimId: reservation.creationClaimId,
+      eventId: created.eventId,
+      providerCalendarId: created.providerCalendarId,
+      providerConnectionId: created.providerConnectionId,
+      terminalState: "created_verified",
+    });
+  }
 
   return {
     receipt: {
@@ -283,6 +292,7 @@ function matchesCalendarInvitation({
       readback.title === proposal.title &&
       readback.startAt === proposal.startAt &&
       readback.endAt === proposal.endAt &&
+      readback.timezone === proposal.timezone &&
       readback.location === proposal.location &&
       attendeeSetHash(readback.attendees) ===
         attendeeSetHash(proposal.attendees),

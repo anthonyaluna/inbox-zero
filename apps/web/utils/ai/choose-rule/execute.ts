@@ -26,6 +26,7 @@ import {
   parseInboxZeroDraftProposal,
 } from "@/utils/coastline/draft-proposal";
 import { dispatchCalendarForMessage } from "@/utils/coastline/calendar-context-dispatch";
+import type { CalendarMatterContextLoader } from "@/utils/coastline/calendar-matter-context-loader";
 
 const MODULE = "ai-execute-act";
 
@@ -45,12 +46,14 @@ export async function executeAct({
   emailAccount,
   message,
   logger,
+  calendarMatterContextLoader,
 }: {
   client: EmailProvider;
   executedRule: ExecutedRuleWithActionItems;
   message: ParsedMessage;
   emailAccount: ActionExecutionEmailAccount;
   logger: Logger;
+  calendarMatterContextLoader?: CalendarMatterContextLoader;
 }): Promise<ExecutedRuleStatus> {
   const log = logger.with({
     module: MODULE,
@@ -65,6 +68,9 @@ export async function executeAct({
     message,
     account: emailAccount,
     logger: log,
+    ...(calendarMatterContextLoader
+      ? { matterContextLoader: calendarMatterContextLoader }
+      : {}),
   });
   if (calendarResult.status === "dispatched") {
     log.info("Clear calendar proposal dispatched", {

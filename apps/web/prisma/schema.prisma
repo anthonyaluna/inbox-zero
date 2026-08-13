@@ -761,6 +761,8 @@ model CoastlineCalendarInvitationReservation {
   threadId             String
   sourceMessageId      String
   proposalFingerprint  String
+  creationClaimId      String?
+  creationClaimExpiresAt DateTime?
   providerEventId      String?
   providerCalendarId   String?
   providerConnectionId String?
@@ -770,6 +772,7 @@ model CoastlineCalendarInvitationReservation {
   @@unique([accountId, idempotencyKey])
   @@index([providerEventId])
   @@index([terminalState])
+  @@index([creationClaimExpiresAt])
 }
 
 model CoastlineDraftReservation {
