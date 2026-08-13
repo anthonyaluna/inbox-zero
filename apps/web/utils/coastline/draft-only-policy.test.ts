@@ -20,33 +20,41 @@ describe("assertCoastlineDraftOnlyAction", () => {
   });
 
   it.each([
-    ActionType.SEND_EMAIL,
-    ActionType.REPLY,
-    ActionType.FORWARD,
     ActionType.ARCHIVE,
-    ActionType.MARK_READ,
+    ActionType.LABEL,
     ActionType.MOVE_FOLDER,
-    "UNSUBSCRIBE",
-    "CREATE_RULE",
-  ])("rejects %s with a stable policy error", (actionType) => {
-    try {
+    ActionType.MARK_READ,
+  ])("allows registered %s actions when the Coastline runtime is enabled", (actionType) => {
+    expect(() =>
       assertCoastlineDraftOnlyAction({
         actionType,
         providerName: "microsoft",
         coastlineDraftProposalsEnabled: true,
         providerCapabilities: { canDraftEmail: true },
-      });
-      throw new Error("Expected the Coastline draft-only policy to reject");
-    } catch (error) {
-      expect(error).toBeInstanceOf(CoastlineDraftOnlyPolicyError);
-      expect(error).toMatchObject({
-        code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
-        actionType,
-      });
-    }
+      }),
+    ).not.toThrow();
   });
 
-  it("rejects Gmail even for a draft action", () => {
+  it.each([ActionType.SEND_EMAIL, ActionType.REPLY, ActionType.FORWARD])(
+    "rejects outbound %s actions with a stable policy error",
+    (actionType) => {
+      expect(() =>
+        assertCoastlineDraftOnlyAction({
+          actionType,
+          providerName: "microsoft",
+          coastlineDraftProposalsEnabled: true,
+          providerCapabilities: { canDraftEmail: true },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+          actionType,
+        }),
+      );
+    },
+  );
+
+  it("keeps Coastline production actions on Microsoft", () => {
     expect(() =>
       assertCoastlineDraftOnlyAction({
         actionType: ActionType.DRAFT_EMAIL,
@@ -77,11 +85,24 @@ describe("assertCoastlineDraftOnlyAction", () => {
 describe("assertCoastlineServerActionAllowed", () => {
   it.each([
     "unsubscribeSender",
-    "createRule",
-    "updateRule",
-    "deleteRule",
+    "bulkArchive",
+    "cleanInbox",
     "setSenderStatus",
-  ])("blocks the %s mutation surface in Coastline mode", (actionName) => {
+  ])("allows the registered %s mutation surface in Coastline mode", (actionName) => {
+    expect(() =>
+      assertCoastlineServerActionAllowed({
+        actionName,
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "sendEmail",
+    "replyToEmail",
+    "forwardEmail",
+    "trashThread",
+  ])("blocks the %s non-registered mutation surface in Coastline mode", (actionName) => {
     expect(() =>
       assertCoastlineServerActionAllowed({
         actionName,
@@ -91,6 +112,31 @@ describe("assertCoastlineServerActionAllowed", () => {
       expect.objectContaining({
         code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
         actionType: actionName,
+      }),
+    );
+  });
+
+  it("allows registered direct route mutations in Coastline mode", () => {
+    expect(() =>
+      assertCoastlineMutationAllowed({
+        surface: "mobile/senders/unsubscribe",
+        mutation: "UNSUBSCRIBE",
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects direct send mutations in Coastline mode", () => {
+    expect(() =>
+      assertCoastlineMutationAllowed({
+        surface: "mobile/mail/send",
+        mutation: "SEND_EMAIL",
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
+        actionType: "SEND_EMAIL",
       }),
     );
   });
@@ -106,21 +152,6 @@ describe("assertCoastlineServerActionAllowed", () => {
 });
 
 describe("assertCoastlineMutationAllowed", () => {
-  it("rejects a direct route mutation with the stable policy error in Coastline mode", () => {
-    expect(() =>
-      assertCoastlineMutationAllowed({
-        surface: "mobile/rules/create",
-        mutation: "CREATE_RULE",
-        coastlineDraftProposalsEnabled: true,
-      }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "COASTLINE_DRAFT_ONLY_ACTION_BLOCKED",
-        actionType: "CREATE_RULE",
-      }),
-    );
-  });
-
   it("preserves direct mutations outside Coastline mode", () => {
     expect(() =>
       assertCoastlineMutationAllowed({

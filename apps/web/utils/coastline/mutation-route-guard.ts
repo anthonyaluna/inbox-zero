@@ -12,7 +12,7 @@ type RouteHandler<TRequest extends NextRequest> = (
 
 /**
  * Reject a direct REST mutation before its auth/provider middleware, request
- * body parsing, or persistence work starts when Coastline draft-only mode is
+ * body parsing, or persistence work starts when Coastline production policy is
  * active. Keep the guard outside the route middleware stack.
  */
 export function withCoastlineMutationGuard<

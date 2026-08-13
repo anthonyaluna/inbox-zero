@@ -1,17 +1,16 @@
 ---
-title: Coastline local draft-only pilot
-description: Boundary contract for using Inbox Zero with Coastline's Microsoft 365 draft workflow.
+title: Coastline Microsoft production runtime
+description: Boundary contract for registered Inbox Zero capabilities in Coastline's Microsoft 365 runtime.
 ---
 
-# Coastline local draft-only pilot
+# Coastline Microsoft production runtime
 
-This fork is used for a single-user Omen evaluation. It may read and classify a
-Microsoft 365 mailbox and propose a reply draft. It must not send, delete,
-archive, mark messages read, move messages, change labels, unsubscribe, or
-create rules.
+Registered Coastline capabilities may read, classify, draft, organize, file,
+unsubscribe, and create clear calendar events in Microsoft 365. It must not
+send, reply, forward, trash messages, or delete drafts.
 
 When `COASTLINE_DRAFT_PROPOSALS_ENABLED=true` is set in the local environment,
-the Microsoft `DRAFT_EMAIL` action returns and validates the versioned
+registered Microsoft actions return and validate the versioned
 `inbox_zero_draft_proposal.v1` contract from
 `apps/web/utils/coastline/draft-proposal.ts`. The existing Inbox Zero draft
 creator still owns the Microsoft Graph draft write, while the Coastline adapter
@@ -24,11 +23,9 @@ the account, thread, source message, model, confidence, idempotency key, and
 execution receipt fields needed for audit. Do not commit mailbox contents,
 OAuth tokens, cookies, or local exports.
 
-The pilot is local-only by default. A reproducible staging environment is
-allowed only when it remains Microsoft draft-only and uses the emulator URL.
-Do not connect the shared AP mailbox or any production mailbox until a separate
-lane review confirms the Microsoft Graph identity, scope, target mailbox,
-rollback path, and terminal readback.
+Use the runtime flag for one production capability policy. Source binding,
+idempotency, rollback, and terminal readback remain completion controls, not
+per-item approval gates.
 
 ## Staging contract
 

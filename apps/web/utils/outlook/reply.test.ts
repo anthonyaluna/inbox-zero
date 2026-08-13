@@ -51,7 +51,7 @@ describe("Outlook email formatting", () => {
     vi.restoreAllMocks();
   });
 
-  it("formats reply email with Outlook-style formatting and Aptos font", () => {
+  it("formats reply email with Coastline Outlook formatting", () => {
     const textContent = "This is my reply";
     const message: Pick<ParsedMessage, "headers" | "textPlain" | "textHtml"> = {
       headers: {
@@ -68,11 +68,12 @@ describe("Outlook email formatting", () => {
     const { html } = createOutlookReplyContent({
       textContent,
       htmlContent: "",
+      textColor: "#0f172a",
       message,
     });
 
     expect(html).toBe(
-      `<div dir="ltr" style="font-family: Aptos, Calibri, Arial, Helvetica, sans-serif; font-size: 12pt; color: rgb(0, 0, 0);">This is my reply</div>
+      `<div dir="ltr" style="font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: #0f172a;">This is my reply</div>
 <br>
 <div style="border-top: 1px solid #e1e1e1; padding-top: 10px; margin-top: 10px;">
   <div dir="ltr" style="font-size: 11pt; color: rgb(0, 0, 0);">On Thu, 6 Feb 2025 at 21:23, John Doe &lt;john@example.com&gt; wrote:<br></div>
@@ -171,7 +172,7 @@ describe("Outlook email formatting", () => {
     });
 
     expect(html).toBe(
-      `<div dir="rtl" style="font-family: Aptos, Calibri, Arial, Helvetica, sans-serif; font-size: 12pt; color: rgb(0, 0, 0);">שלום, מה שלומך?</div>
+      `<div dir="rtl" style="font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: #000000;">שלום, מה שלומך?</div>
 <br>
 <div style="border-top: 1px solid #e1e1e1; padding-top: 10px; margin-top: 10px;">
   <div dir="rtl" style="font-size: 11pt; color: rgb(0, 0, 0);">On Thu, 6 Feb 2025 at 21:23, David Cohen &lt;david@example.com&gt; wrote:<br></div>

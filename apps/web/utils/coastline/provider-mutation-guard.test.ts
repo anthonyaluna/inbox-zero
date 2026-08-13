@@ -9,7 +9,7 @@ const coastlineEnvironment = vi.hoisted(() => ({
 vi.mock("@/env", () => ({ env: coastlineEnvironment }));
 
 describe("withCoastlineProviderMutationGuard", () => {
-  it("blocks a background provider delete before the provider sink is called in Coastline mode", () => {
+  it("blocks a background provider draft delete before the provider sink is called in Coastline mode", () => {
     const deleteDraft = vi.fn();
     const provider = {
       name: "microsoft",
@@ -28,13 +28,10 @@ describe("withCoastlineProviderMutationGuard", () => {
   });
 
   it.each([
-    "archiveThread",
     "createLabel",
     "deleteDraft",
     "forwardEmail",
     "labelMessage",
-    "markRead",
-    "moveThreadToFolder",
     "removeThreadLabel",
     "replyToEmail",
     "sendDraft",
@@ -55,6 +52,21 @@ describe("withCoastlineProviderMutationGuard", () => {
     expect(providerSink).not.toHaveBeenCalled();
   });
 
+  it.each(["archiveThread", "markRead", "moveThreadToFolder"])(
+    "allows registered %s provider mutations in Coastline mode",
+    async (operation) => {
+      const providerSink = vi.fn().mockResolvedValue(undefined);
+      const provider = {
+        name: "microsoft",
+        [operation]: providerSink,
+      } as unknown as EmailProvider;
+
+      const guarded = withCoastlineProviderMutationGuard(provider);
+      await Reflect.get(guarded, operation)("thread-1", "owner@example.com");
+      expect(providerSink).toHaveBeenCalledOnce();
+    },
+  );
+
   it("preserves Microsoft draft creation and normal-mode provider mutations", async () => {
     const draftEmail = vi.fn().mockResolvedValue({ draftId: "draft-1" });
     const archiveThread = vi.fn().mockResolvedValue(undefined);
@@ -69,11 +81,13 @@ describe("withCoastlineProviderMutationGuard", () => {
     });
     await coastline.draftEmail({} as never, { content: "draft" }, "owner");
     expect(draftEmail).toHaveBeenCalledOnce();
+    await coastline.archiveThread("thread-1", "owner@example.com");
+    expect(archiveThread).toHaveBeenCalledOnce();
 
     const normal = withCoastlineProviderMutationGuard(provider, {
       coastlineDraftProposalsEnabled: false,
     });
-    await normal.archiveThread("thread-1", "owner@example.com");
-    expect(archiveThread).toHaveBeenCalledOnce();
+    await normal.archiveThread("thread-2", "owner@example.com");
+    expect(archiveThread).toHaveBeenCalledTimes(2);
   });
 });

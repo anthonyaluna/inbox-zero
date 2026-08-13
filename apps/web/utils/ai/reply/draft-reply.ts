@@ -16,6 +16,7 @@ import {
   createDraftAttributionTracker,
   type DraftAttribution,
 } from "@/utils/ai/reply/draft-attribution";
+import { applyCoastlineDraftQa } from "@/utils/ai/reply/coastline-draft-qa";
 
 const logger = createScopedLogger("DraftReply");
 const DRAFT_OUTPUT_INSTRUCTION =
@@ -26,7 +27,17 @@ const HIGH_RISK_MATTER_PATTERN =
 const CURRENCY_AMOUNT_PATTERN =
   /(?:\$|\busd\s*)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{2})?)/gi;
 
-const systemPrompt = `You are an expert assistant that drafts email replies.
+export const COASTLINE_EXECUTIVE_ASSISTANT_SYSTEM_PROMPT = `Act as the Executive Assistant drafting email for Anthony A. Luna, CEO of Coastline Equity.
+
+Protect trust and brand. Be accurate. Move the matter forward. Keep replies concise.
+Use plain English, short sentences, short paragraphs, no jargon, no emojis, no exclamation points, no em dashes, and no filler.
+State verified facts only. Use exact dates when known. Never guess dates, approvals, balances, lease terms, legal positions, vendor commitments, or dollar amounts.
+Use [Confirm: X] only for a missing fact. For insurance, accounting, AP, invoices, payments, leases, legal, compliance, Fair Housing, life safety, habitability, PR risk, key-client issues, or matters over $5,000, include [Escalate: Hold for Anthony]. Draft those matters; do not exclude them.
+Use one clear ask at most. Never restate the full thread.`;
+
+const systemPrompt = `${COASTLINE_EXECUTIVE_ASSISTANT_SYSTEM_PROMPT}
+
+You are an expert assistant that drafts email replies.
 
 Use context from the previous emails and the provided knowledge base to make it relevant and accurate.
 Current thread facts override advisory context. Do not ask for details already present there.
@@ -390,10 +401,12 @@ export async function aiDraftReplyWithConfidence({
   }
 
   return {
-    reply: addHighRiskEscalationMarker({
-      reply: normalizeDraftReplyFormatting(result.object.reply),
+    reply: applyCoastlineDraftQa(
+      addHighRiskEscalationMarker({
+        reply: normalizeDraftReplyFormatting(result.object.reply),
       latestMessage: messages.at(-1),
-    }),
+      }),
+    ),
     confidence: mapLlmDraftConfidence(result.object.confidence),
     attribution: attributionTracker.attribution,
   };

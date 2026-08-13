@@ -9,10 +9,12 @@ import { convertNewlinesToBr, escapeHtml } from "@/utils/string";
 export const createOutlookReplyContent = ({
   textContent,
   htmlContent,
+  textColor = "#000000",
   message,
 }: {
   textContent?: string;
   htmlContent?: string;
+  textColor?: string;
   message: Pick<ParsedMessage, "headers" | "textPlain" | "textHtml">;
 }): {
   html: string;
@@ -40,9 +42,9 @@ export const createOutlookReplyContent = ({
   const contentHtml =
     htmlContent || (textContent ? renderMixedContentAsHtml(textContent) : "");
 
-  // Outlook-specific font styling with Aptos as default
+  // Coastline drafts use the same compact font family as Anthony's Outlook signature.
   const outlookFontStyle =
-    "font-family: Aptos, Calibri, Arial, Helvetica, sans-serif; font-size: 12pt; color: rgb(0, 0, 0);";
+    `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${textColor};`;
 
   // Format HTML version with Outlook-style formatting
   const html =
