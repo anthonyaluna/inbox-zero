@@ -50,34 +50,35 @@ describe("withCoastlineProviderMutationGuard", () => {
     expect(providerSink).not.toHaveBeenCalled();
   });
 
-  it.each(["archiveThread", "markRead", "moveThreadToFolder"])(
-    "allows registered %s provider mutations in Coastline mode",
-    async (operation) => {
-      const providerSink = vi.fn().mockResolvedValue(undefined);
-      const provider = {
-        name: "microsoft",
-        [operation]: providerSink,
-      } as unknown as EmailProvider;
+  it.each([
+    "archiveThread",
+    "markRead",
+    "moveThreadToFolder",
+  ])("allows registered %s provider mutations in Coastline mode", async (operation) => {
+    const providerSink = vi.fn().mockResolvedValue(undefined);
+    const provider = {
+      name: "microsoft",
+      [operation]: providerSink,
+    } as unknown as EmailProvider;
 
-      const guarded = withCoastlineProviderMutationGuard(provider);
-      await Reflect.get(guarded, operation)("thread-1", "owner@example.com");
-      expect(providerSink).toHaveBeenCalledOnce();
-    },
-  );
+    const guarded = withCoastlineProviderMutationGuard(provider);
+    await Reflect.get(guarded, operation)("thread-1", "owner@example.com");
+    expect(providerSink).toHaveBeenCalledOnce();
+  });
 
-  it.each(["labelMessage", "blockUnsubscribedEmail"])(
-    "allows registered %s provider operations in Coastline mode",
-    async (operation) => {
-      const providerSink = vi.fn().mockResolvedValue(undefined);
-      const guarded = withCoastlineProviderMutationGuard({
-        name: "microsoft",
-        [operation]: providerSink,
-      } as unknown as EmailProvider);
+  it.each([
+    "labelMessage",
+    "blockUnsubscribedEmail",
+  ])("allows registered %s provider operations in Coastline mode", async (operation) => {
+    const providerSink = vi.fn().mockResolvedValue(undefined);
+    const guarded = withCoastlineProviderMutationGuard({
+      name: "microsoft",
+      [operation]: providerSink,
+    } as unknown as EmailProvider);
 
-      await Reflect.get(guarded, operation)("message-1");
-      expect(providerSink).toHaveBeenCalledOnce();
-    },
-  );
+    await Reflect.get(guarded, operation)("message-1");
+    expect(providerSink).toHaveBeenCalledOnce();
+  });
 
   it("preserves Microsoft draft creation and normal-mode provider mutations", async () => {
     const draftEmail = vi.fn().mockResolvedValue({ draftId: "draft-1" });
@@ -101,5 +102,22 @@ describe("withCoastlineProviderMutationGuard", () => {
     });
     await normal.archiveThread("thread-2", "owner@example.com");
     expect(archiveThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows registered Microsoft meeting-recap draft creation in Coastline mode", async () => {
+    const createDraft = vi.fn().mockResolvedValue({ id: "draft-meeting-1" });
+    const guarded = withCoastlineProviderMutationGuard({
+      name: "microsoft",
+      createDraft,
+    } as unknown as EmailProvider);
+
+    await guarded.createDraft({
+      to: "attendee@example.com",
+      subject: "Meeting follow-up",
+      messageHtml:
+        '<div style="font-family: Verdana; font-size: 10pt">Summary</div>',
+    });
+
+    expect(createDraft).toHaveBeenCalledOnce();
   });
 });

@@ -99,6 +99,7 @@ function isAllowedCoastlineDraftOperation({
     "blockUnsubscribedEmail",
     "bulkArchiveFromSenders",
     "bulkArchiveThreads",
+    "createDraft",
     "draftEmail",
     "labelMessage",
     "markRead",

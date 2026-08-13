@@ -16,36 +16,36 @@ This guide complements the deployment guides with ongoing operational practices.
 
 Database migrations may not be reversible. Rolling the application image back does not automatically roll the database schema back.
 
-## Coastline draft-only staging gate
+## Coastline one-stack runtime
 
-For the Coastline Microsoft draft-only pilot, staging is a prerequisite to a
-release, not a production target. Use the existing Docker Compose web, worker,
-Redis, and cron services; do not introduce a separate deployment topology.
-Before a staging artifact is promoted, run:
+Coastline uses one Azure Container Apps stack for web, worker, scheduled jobs,
+PostgreSQL, Redis, receipts, and logs. Do not create a second application or
+database for a routine draft or mailbox-organization run. Registered lanes
+execute without per-item approval or artificial volume limits once their
+runtime is deployed and connected.
+
+Before the first live run, execute the one-time protected canary against the
+dedicated non-production mailbox and record the current artifact, provider
+readback, idempotency replay, and correction path:
 
 ```powershell
 pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
 pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
-  -BaseUrl https://inbox-zero-staging.example.test `
-  -OutputPath C:\staging-receipts\inbox-zero-staging.json
+  -BaseUrl $env:COASTLINE_STAGING_BASE_URL `
+  -OutputPath C:\coastline-receipts\inbox-zero-canary.json
 ```
 
-The configuration preflight fails closed unless the checkout is clean, Node 24 and pnpm 11
-are available, Docker reports a healthy PostgreSQL service and reachable Redis
-queue, required staging variable names are present, the Microsoft URL is an
-approved emulator URL, `QUEUE_BACKEND=bullmq` has a `REDIS_URL`,
-`COASTLINE_DRAFT_PROPOSALS_ENABLED=true`, and
-`NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`. This local Docker/emulator result is
-not staging evidence. The remote verification receipt contains only
+The local preflight checks configuration and dependencies. It is not a
+substitute for the protected canary receipt. The remote receipt contains only
 timestamps, the protected deployed artifact SHA, sanitized worker and queue
-identities, cron evidence ID, service states, and pass/fail codes. Do not include
-secrets, OAuth tokens, mailbox data, cookies, or endpoint credentials in that
-receipt.
+identities, cron evidence ID, service states, and pass/fail codes. Do not
+include secrets, OAuth tokens, mailbox data, cookies, or endpoint credentials
+in that receipt.
 
-`Mail.Send` remains disabled. The preflight accepts only the documented local
-Microsoft emulator hosts. For non-loopback verification, `-BaseUrl` must
+`Mail.Send` remains disabled. For non-loopback verification, `-BaseUrl` must
 exactly match the protected `COASTLINE_STAGING_BASE_URL`; hostname labels never
-grant access.
+grant access. Calendar invitations and attendee events are enabled only for
+clear, validated proposals and must have exact provider readback.
 The cron probe intentionally omits credentials and accepts only `401`; it
 cannot schedule or execute work.
 
@@ -59,14 +59,13 @@ binds the response to a fresh verifier nonce and authenticated cron evidence.
 It never reads Git, Docker, Docker Compose, a caller-supplied SHA, or local
 service state.
 
-The protected `Coastline staging preflight` workflow is the staging artifact
-publication gate. It must pass the web build, focused Coastline tests, full web
-test command, local configuration preflight, remote evidence verification, and
-`git diff --check`. Its staging values come only from the protected
-`coastline-inbox-zero-staging` environment. The remote evidence job requires
-the GitHub variables `COASTLINE_INBOX_ZERO_PROTECTED_SHA` and
-`COASTLINE_INBOX_ZERO_STAGING_BASE_URL` plus the secret
-`COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET`; values remain outside Git.
+The protected canary workflow is a one-time deployment/readback check, not a
+routine approval queue. It must pass the web build, focused Coastline tests,
+full web test command, local configuration preflight, remote evidence
+verification, and `git diff --check`. Protected values remain outside Git.
+After the canary is complete, the same stack runs registered draft,
+organization, filing, Teams, and calendar lanes autonomously. Use
+`COASTLINE_DRAFT_PROPOSALS_ENABLED=false` only as the emergency kill switch.
 
 ## Database backups
 

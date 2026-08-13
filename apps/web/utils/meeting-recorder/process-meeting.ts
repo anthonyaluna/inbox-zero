@@ -7,6 +7,8 @@ import {
   type MeetingSummary,
 } from "@/utils/ai/meeting-recorder/summarize-meeting";
 import { createEmailProvider } from "@/utils/email/provider";
+import { createOutlookStandaloneDraftContent } from "@/utils/outlook/reply";
+import { resolveOutlookSignatureColor } from "@/utils/outlook/signature-color";
 import { captureException } from "@/utils/error";
 import type { EmailAccountWithAI } from "@/utils/llms/types";
 import type { Logger } from "@/utils/logger";
@@ -287,10 +289,31 @@ async function createFollowUpDraft({
     return;
   }
 
+  const signature =
+    provider === "microsoft"
+      ? (await emailProvider.getSignatures())[0]
+      : undefined;
+  const signatureEvidence =
+    provider === "microsoft"
+      ? resolveOutlookSignatureColor({
+          signatureHtml: signature?.signature ?? "",
+          sourceMessageId: signature?.sourceMessageId ?? "unavailable",
+          observedAt: new Date(),
+        })
+      : undefined;
+  const messageHtml =
+    provider === "microsoft"
+      ? createOutlookStandaloneDraftContent({
+          textContent: draft.body,
+          textColor: signatureEvidence?.color,
+          signatureHtml: signature?.signature,
+        }).html
+      : textToHtmlParagraphs(draft.body);
+
   const { id } = await emailProvider.createDraft({
     to: recipients.map((recipient) => recipient.email).join(", "),
     subject: draft.subject,
-    messageHtml: textToHtmlParagraphs(draft.body),
+    messageHtml,
   });
 
   await prisma.meeting.update({

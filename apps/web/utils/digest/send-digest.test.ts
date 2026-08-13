@@ -6,7 +6,7 @@ import {
   MessagingRouteTargetType,
 } from "@/generated/prisma/enums";
 import { createTestLogger } from "@/__tests__/helpers";
-import { sendDigest } from "./send-digest";
+import { sendDigest, shouldDeliverDigestEmail } from "./send-digest";
 import {
   resolveSlackRouteDestination,
   sendDigestToSlack,
@@ -140,5 +140,25 @@ describe("sendDigest", () => {
       /No deliverable digest channels/,
     );
     expect(sendDigestToSlack).not.toHaveBeenCalled();
+  });
+});
+
+describe("shouldDeliverDigestEmail", () => {
+  it("keeps digest email disabled in Coastline mode", () => {
+    expect(
+      shouldDeliverDigestEmail({
+        sendEmail: true,
+        coastlineDraftProposalsEnabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves normal Inbox Zero digest email behavior outside Coastline mode", () => {
+    expect(
+      shouldDeliverDigestEmail({
+        sendEmail: true,
+        coastlineDraftProposalsEnabled: false,
+      }),
+    ).toBe(true);
   });
 });

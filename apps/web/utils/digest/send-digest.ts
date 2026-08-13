@@ -72,7 +72,12 @@ export async function sendDigest({
 
   const deliveryPromises: Promise<void>[] = [];
 
-  if (sendEmail) {
+  if (
+    shouldDeliverDigestEmail({
+      sendEmail,
+      coastlineDraftProposalsEnabled: env.COASTLINE_DRAFT_PROPOSALS_ENABLED,
+    })
+  ) {
     deliveryPromises.push(
       sendDigestViaEmail({
         emailAccountId,
@@ -84,6 +89,11 @@ export async function sendDigest({
         logger,
       }),
     );
+  } else if (sendEmail && env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
+    logger.info("Skipping digest email in Coastline mode", {
+      reason:
+        "email remains draft-only; digest uses registered messaging lanes",
+    });
   }
 
   for (const channel of channels) {
@@ -157,6 +167,16 @@ export async function sendDigest({
       throw new Error("All digest delivery channels failed");
     }
   }
+}
+
+export function shouldDeliverDigestEmail({
+  sendEmail,
+  coastlineDraftProposalsEnabled,
+}: {
+  sendEmail: boolean;
+  coastlineDraftProposalsEnabled: boolean;
+}) {
+  return sendEmail && !coastlineDraftProposalsEnabled;
 }
 
 async function sendDigestViaEmail({

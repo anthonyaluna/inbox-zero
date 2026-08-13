@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { createOutlookReplyContent } from "@/utils/outlook/reply";
+import {
+  createOutlookReplyContent,
+  createOutlookStandaloneDraftContent,
+} from "@/utils/outlook/reply";
 import type { ParsedMessage } from "@/utils/types";
 
 describe("Outlook email formatting", () => {
@@ -131,7 +134,12 @@ describe("Outlook email formatting", () => {
       textContent: "Draft",
       textColor: "#000000; background:url(unsafe)",
       message: {
-        headers: { date: "2025-02-06", from: "a@example.com", subject: "S", to: "b@example.com" },
+        headers: {
+          date: "2025-02-06",
+          from: "a@example.com",
+          subject: "S",
+          to: "b@example.com",
+        },
         textPlain: "Original",
         textHtml: "",
       },
@@ -163,6 +171,21 @@ describe("Outlook email formatting", () => {
       'Use &lt;script&gt;alert("unsafe")&lt;/script&gt;<br>Next line',
     );
     expect(html).not.toContain("<script>");
+  });
+
+  it("renders standalone meeting drafts with Verdana, signature color, and a sanitized signature", () => {
+    const { html, text } = createOutlookStandaloneDraftContent({
+      textContent: "Thanks for the discussion.",
+      textColor: "#123456",
+      signatureHtml: '<p>Anthony A. Luna</p><script>alert("unsafe")</script>',
+    });
+
+    expect(html).toContain(
+      "font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: #123456;",
+    );
+    expect(html).toContain("Anthony A. Luna");
+    expect(html).not.toContain("<script>");
+    expect(text).toContain("Anthony A. Luna");
   });
 
   it("formats reply email correctly for RTL content with Outlook styling", () => {

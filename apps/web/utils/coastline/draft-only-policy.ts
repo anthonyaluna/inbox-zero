@@ -21,7 +21,10 @@ type CoastlineCapability = (typeof COASTLINE_REGISTERED_CAPABILITIES)[number];
 export function isCoastlineCapabilityRegistered(
   capability: CoastlineCapability | undefined,
 ) {
-  return capability !== undefined && COASTLINE_REGISTERED_CAPABILITIES.includes(capability);
+  return (
+    capability !== undefined &&
+    COASTLINE_REGISTERED_CAPABILITIES.includes(capability)
+  );
 }
 
 export class CoastlineDraftOnlyPolicyError extends Error {
@@ -49,6 +52,7 @@ const ACTION_CAPABILITIES: Partial<Record<string, CoastlineCapability>> = {
 };
 
 const MUTATION_CAPABILITIES: Record<string, CoastlineCapability> = {
+  CREATE_DRAFT: "meeting_recap_draft",
   ARCHIVE: "archive",
   ARCHIVE_THREAD: "archive",
   BULK_ARCHIVE: "archive",
@@ -121,7 +125,8 @@ export function assertCoastlineDraftOnlyAction({
   if (
     providerName !== "microsoft" ||
     !isCoastlineCapabilityRegistered(ACTION_CAPABILITIES[actionType]) ||
-    (actionType === ActionType.DRAFT_EMAIL && !providerCapabilities.canDraftEmail)
+    (actionType === ActionType.DRAFT_EMAIL &&
+      !providerCapabilities.canDraftEmail)
   ) {
     throw new CoastlineDraftOnlyPolicyError(actionType);
   }

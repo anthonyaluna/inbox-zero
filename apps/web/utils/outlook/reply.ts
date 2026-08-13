@@ -4,7 +4,11 @@ import {
   buildQuotedPlainText,
   quotePlainTextContent,
 } from "@/utils/email/quoted-plain-text";
-import { convertNewlinesToBr, escapeHtml } from "@/utils/string";
+import {
+  convertNewlinesToBr,
+  escapeHtml,
+  textToHtmlParagraphs,
+} from "@/utils/string";
 
 export const createOutlookReplyContent = ({
   textContent,
@@ -46,8 +50,7 @@ export const createOutlookReplyContent = ({
   const verifiedTextColor = /^#[0-9a-f]{6}$/i.test(textColor)
     ? textColor.toLowerCase()
     : "#000000";
-  const outlookFontStyle =
-    `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${verifiedTextColor};`;
+  const outlookFontStyle = `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${verifiedTextColor};`;
 
   // Format HTML version with Outlook-style formatting
   const html =
@@ -65,6 +68,44 @@ export const createOutlookReplyContent = ({
     html,
   };
 };
+
+/**
+ * Render a standalone Outlook draft with the same deterministic typography as
+ * replies. Meeting-recorder drafts do not have a source message to quote, so
+ * they use this renderer instead of the reply renderer.
+ */
+export function createOutlookStandaloneDraftContent({
+  textContent,
+  textColor = "#000000",
+  signatureHtml,
+}: {
+  textContent: string;
+  textColor?: string;
+  signatureHtml?: string;
+}): { html: string; text: string } {
+  const verifiedTextColor = /^#[0-9a-f]{6}$/i.test(textColor)
+    ? textColor.toLowerCase()
+    : "#000000";
+  const dir = detectTextDirection(textContent);
+  const style = `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${verifiedTextColor};`;
+  const safeSignature = signatureHtml
+    ? sanitizeStandaloneSignatureHtml(signatureHtml)
+    : "";
+  const html = [
+    `<div dir="${dir}" style="${style}">${textToHtmlParagraphs(textContent)}</div>`,
+    safeSignature ? `<div style="${style}">${safeSignature}</div>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  return {
+    html,
+    text: safeSignature
+      ? `${textContent.trim()}\n\n${load(safeSignature).text().trim()}`
+      : textContent.trim(),
+  };
+}
 
 function detectTextDirection(text: string): "ltr" | "rtl" {
   // Basic RTL detection - checks for RTL characters at the start of the text
@@ -84,6 +125,17 @@ function renderMixedContentAsHtml(content: string): string {
       $(node).replaceWith(convertNewlinesToBr(escapeHtml(node.data)));
     });
 
+  return $.root().html() ?? "";
+}
+
+function sanitizeStandaloneSignatureHtml(signatureHtml: string): string {
+  const $ = load(signatureHtml, null, false);
+  $("script, iframe, object, embed, form").remove();
+  $("*").each((_index, element) => {
+    $(element).removeAttr("onerror");
+    $(element).removeAttr("onclick");
+    $(element).removeAttr("onload");
+  });
   return $.root().html() ?? "";
 }
 
