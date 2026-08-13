@@ -25,8 +25,7 @@ import {
   type InboxZeroDraftReceipt,
   parseInboxZeroDraftProposal,
 } from "@/utils/coastline/draft-proposal";
-import { classifyCalendarContext } from "@/utils/coastline/calendar-context-broker";
-import { dispatchClearCoastlineCalendarProposal } from "@/utils/coastline/action-router";
+import { dispatchCalendarForMessage } from "@/utils/coastline/calendar-context-dispatch";
 
 const MODULE = "ai-execute-act";
 
@@ -61,8 +60,20 @@ export async function executeAct({
     messageId: executedRule.messageId,
   });
 
+  const calendarResult = await dispatchCalendarForMessage({
+    clientName: client.name,
+    message,
+    account: emailAccount,
+    logger: log,
+  });
+  if (calendarResult.status === "dispatched") {
+    log.info("Clear calendar proposal dispatched", {
+      eventId: calendarResult.eventId,
+      sourceMessageId: message.id,
+    });
+  }
+
   const actionFailures: ActionFailure[] = [];
-  let calendarContextEvaluated = false;
 
   for (const action of executedRule.actionItems) {
     try {
@@ -82,27 +93,6 @@ export async function executeAct({
           logger: log,
         });
         continue;
-      }
-
-      if (!calendarContextEvaluated && client.name === "microsoft") {
-        calendarContextEvaluated = true;
-        const calendarContext = classifyCalendarContext({
-          message,
-          accountId: emailAccount.id,
-          accountEmail: emailAccount.email,
-          defaultTimezone: emailAccount.timezone,
-        });
-        if (calendarContext.status === "clear" && calendarContext.proposal) {
-          const calendarResult = await dispatchClearCoastlineCalendarProposal({
-            proposal: calendarContext.proposal,
-            logger: log,
-          });
-          log.info("Clear calendar proposal dispatched", {
-            eventId: calendarResult.receipt.eventId,
-            sourceMessageId: message.id,
-            idempotencyKey: calendarContext.proposal.idempotencyKey,
-          });
-        }
       }
 
       const actionResult = await runActionFunction({

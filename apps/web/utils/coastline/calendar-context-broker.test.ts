@@ -67,6 +67,44 @@ describe("classifyCalendarContext", () => {
     expect(result.proposal?.timezone).toBe("America/Los_Angeles");
   });
 
+  it("preserves bounded Plaud authority and conflicts without exposing transcript text", () => {
+    const result = classifyCalendarContext({
+      message: baseMessage(),
+      accountId: "account-1",
+      accountEmail: "anthony@example.com",
+      defaultTimezone: "America/Los_Angeles",
+      matterContext: {
+        schema: "coastline.matter_context_packet.v1",
+        status: "transcript_gap",
+        source_authority: "plaud_transcript",
+        conflicts: ["transcript_gap"],
+        meeting_evidence: [
+          {
+            schema: "coastline.plaud.meeting_evidence.v1",
+            provider: "plaud_mcp",
+            recording_id: "rec-1",
+            title: "Freeman security review",
+            source_date: "2026-08-10",
+            transcript_coverage: "gap",
+            source_hash: "a".repeat(64),
+          },
+        ],
+        transcript: "This raw transcript must never reach a calendar proposal.",
+        notes: "This raw note must never reach a calendar proposal.",
+      } as unknown as never,
+    });
+
+    expect(result.status).toBe("clear");
+    expect(result.sourceAuthorities).toEqual(["outlook", "plaud_transcript"]);
+    expect(result.conflicts).toEqual(["transcript_gap"]);
+    expect(JSON.stringify(result)).not.toContain(
+      "This raw transcript must never reach a calendar proposal.",
+    );
+    expect(JSON.stringify(result)).not.toContain(
+      "This raw note must never reach a calendar proposal.",
+    );
+  });
+
   it("does not dispatch when an exact scheduling fact is missing", () => {
     const result = classifyCalendarContext({
       message: baseMessage({

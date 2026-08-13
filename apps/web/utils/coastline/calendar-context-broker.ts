@@ -41,7 +41,27 @@ export type CalendarContextPacketV1 = {
   threadId: string;
   status: "not_scheduling" | "ambiguous" | "conflicting" | "clear";
   reason: string;
+  // Source identifiers and conflict codes only. Raw Plaud transcripts and
+  // notes never cross this boundary into calendar creation.
+  sourceAuthorities: string[];
+  conflicts: string[];
   proposal?: CoastlineCalendarInvitationProposal;
+};
+
+export type MatterContextPacketV1 = {
+  schema: "coastline.matter_context_packet.v1";
+  status?: string;
+  source_authority?: string;
+  conflicts?: string[];
+  meeting_evidence?: Array<{
+    schema: "coastline.plaud.meeting_evidence.v1";
+    provider: "plaud_mcp";
+    recording_id: string;
+    source_hash: string;
+    title?: string;
+    source_date?: string;
+    transcript_coverage?: string;
+  }>;
 };
 
 export function classifyCalendarContext({
@@ -49,17 +69,22 @@ export function classifyCalendarContext({
   accountId,
   accountEmail,
   defaultTimezone,
+  matterContext,
 }: {
   message: ParsedMessage;
   accountId: string;
   accountEmail: string;
   defaultTimezone?: string | null;
+  matterContext?: MatterContextPacketV1;
 }): CalendarContextPacketV1 {
+  const matterMetadata = getMatterContextMetadata(matterContext);
   const base = {
     schema: "coastline.calendar_context_packet.v1" as const,
     sourceSystem: "outlook" as const,
     sourceMessageId: message.id,
     threadId: message.threadId,
+    sourceAuthorities: ["outlook", ...matterMetadata.sourceAuthorities],
+    conflicts: matterMetadata.conflicts,
   };
   const body = getMessageText(message);
 
@@ -139,6 +164,29 @@ export function classifyCalendarContext({
     reason: "explicit_scheduling_request",
     proposal,
   };
+}
+
+function getMatterContextMetadata(matterContext?: MatterContextPacketV1) {
+  if (matterContext?.schema !== "coastline.matter_context_packet.v1") {
+    return { sourceAuthorities: [], conflicts: [] };
+  }
+
+  const sourceAuthority = normalizeMetadataValue(matterContext.source_authority);
+  const conflicts = (matterContext.conflicts ?? [])
+    .map(normalizeMetadataValue)
+    .filter((value): value is string => Boolean(value));
+
+  return {
+    sourceAuthorities: sourceAuthority ? [sourceAuthority] : [],
+    conflicts: [...new Set(conflicts)],
+  };
+}
+
+function normalizeMetadataValue(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9_.-]{1,120}$/.test(normalized)) return null;
+  return normalized;
 }
 
 function getMessageText(message: ParsedMessage) {
