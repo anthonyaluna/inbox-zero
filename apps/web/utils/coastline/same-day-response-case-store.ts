@@ -15,6 +15,7 @@ export type SameDayResponseCaseStore = {
     accountId: string;
     matterId: string;
   }): Promise<SameDayResponseCaseV1 | null>;
+  findMany?(input: { accountId: string }): Promise<SameDayResponseCaseV1[]>;
 };
 
 export async function persistSameDayResponseCase(
@@ -30,6 +31,14 @@ export async function readSameDayResponseCase(
   input: { accountId: string; matterId: string },
 ) {
   return store.findUnique(input);
+}
+
+export async function listSameDayResponseCases(
+  store: SameDayResponseCaseStore,
+  input: { accountId: string },
+) {
+  if (!store.findMany) return [];
+  return store.findMany(input);
 }
 
 export async function ensureSameDayResponseCaseForMessage({
@@ -346,6 +355,14 @@ export function createPrismaSameDayResponseCaseStore(
         select: { contract: true },
       });
       return row ? sameDayResponseCaseSchema.parse(row.contract) : null;
+    },
+    async findMany({ accountId }) {
+      const rows = await client.sameDayResponseCase.findMany({
+        where: { emailAccountId: accountId },
+        orderBy: { responseDeadlineAt: "asc" },
+        select: { contract: true },
+      });
+      return rows.map((row) => sameDayResponseCaseSchema.parse(row.contract));
     },
   };
 }

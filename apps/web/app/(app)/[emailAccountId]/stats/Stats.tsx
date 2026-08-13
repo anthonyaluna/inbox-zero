@@ -21,6 +21,7 @@ import { DatePickerWithRange } from "@/components/DatePickerWithRange";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { CardBasic } from "@/components/ui/card";
 import { useProductAnalytics } from "@/hooks/useProductAnalytics";
+import { SameDayResponseDashboard } from "./SameDayResponseDashboard";
 
 const selectOptions = [
   { label: "Last week", value: "7" },
@@ -160,6 +161,9 @@ export function Stats() {
             dateRange={dateRange}
             refreshInterval={refreshInterval}
           />
+        </ErrorBoundary>
+        <ErrorBoundary fallback={<SectionError title="Same-Day Response" />}>
+          <SameDayResponseDashboard refreshInterval={refreshInterval} />
         </ErrorBoundary>
         <ErrorBoundary fallback={<SectionError title="Rule Stats" />}>
           <RuleStatsChart
