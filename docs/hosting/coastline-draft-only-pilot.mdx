@@ -31,6 +31,12 @@ This is a one-time proof exercise, not an ongoing reviewer or SHA approval
 gate. Do not claim this canary or a production deployment occurred without its
 external receipt.
 
+Environment protection records the branch, current artifact, required
+reviewers, and configured runtime variable names without storing secret values
+in this repository.
+
+The remote readiness receipt independently records the deployed worker artifact and heartbeat before any live provider action is treated as verified.
+
 Keep runtime values out of Git. The deployment requires its database,
 authentication, Microsoft OAuth, queue, and cron settings; it also sets:
 
