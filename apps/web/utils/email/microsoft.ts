@@ -94,13 +94,22 @@ import {
 import { shouldSkipAutoDraft } from "@/utils/auto-draft";
 import { getOutlookMailboxSyncPage } from "@/utils/outlook/mailbox-sync";
 
+const signatureColorEvidenceByAccount = new Map<
+  string,
+  ReturnType<typeof resolveOutlookSignatureColor>
+>();
+
 export class OutlookProvider implements EmailProvider {
   readonly name = "microsoft";
   private readonly client: OutlookClient;
   private readonly logger: Logger;
   private lastKnownSignatureColor?: string;
 
-  constructor(client: OutlookClient, logger?: Logger) {
+  constructor(
+    client: OutlookClient,
+    logger?: Logger,
+    private readonly emailAccountId?: string,
+  ) {
     this.client = client;
     this.logger = (logger || createScopedLogger("outlook-provider")).with({
       provider: "microsoft",
@@ -680,7 +689,15 @@ export class OutlookProvider implements EmailProvider {
     userEmail: string,
     executedRule?: { id: string; threadId: string; emailAccountId: string },
     coastlineDraftMarker?: string,
-  ): Promise<{ draftId: string }> {
+  ): Promise<{
+    draftId: string;
+    signatureColorEvidence?: {
+      color: string;
+      evidenceStatus: "verified" | "last_known" | "configured_default";
+      signatureSha256?: string;
+      sourceMessageId?: string;
+    };
+  }> {
     if (shouldSkipAutoDraft({ logger: this.logger, source: "microsoft" })) {
       return { draftId: "" };
     }
@@ -693,12 +710,19 @@ export class OutlookProvider implements EmailProvider {
     const signature = (await this.getSignatures())[0];
     const signatureColorEvidence = resolveOutlookSignatureColor({
       signatureHtml: signature?.signature ?? "",
-      sourceMessageId: "recent-sent-signature",
+      sourceMessageId: signature?.sourceMessageId ?? "unavailable",
       observedAt: new Date(),
-      lastKnownColor: this.lastKnownSignatureColor,
+      lastKnownColor:
+        this.lastKnownSignatureColor ??
+        (this.emailAccountId
+          ? signatureColorEvidenceByAccount.get(this.emailAccountId)?.color
+          : undefined),
     });
     if (signatureColorEvidence.evidenceStatus === "verified") {
       this.lastKnownSignatureColor = signatureColorEvidence.color;
+    }
+    if (this.emailAccountId) {
+      signatureColorEvidenceByAccount.set(this.emailAccountId, signatureColorEvidence);
     }
     this.logger.info("Resolved Outlook signature color", {
       evidenceStatus: signatureColorEvidence.evidenceStatus,
@@ -728,7 +752,7 @@ export class OutlookProvider implements EmailProvider {
       this.logger.info("Outlook draft created successfully", {
         draftId: result.id,
       });
-      return { draftId: result.id || "" };
+      return { draftId: result.id || "", signatureColorEvidence };
     } else {
       const result = await draftEmail(
         this.client,
@@ -743,7 +767,7 @@ export class OutlookProvider implements EmailProvider {
       this.logger.info("Outlook draft created successfully", {
         draftId: result.id,
       });
-      return { draftId: result.id || "" };
+      return { draftId: result.id || "", signatureColorEvidence };
     }
   }
 
@@ -2053,6 +2077,7 @@ export class OutlookProvider implements EmailProvider {
             {
               email: message.headers.from,
               signature,
+              sourceMessageId: message.id,
               isDefault: true,
               displayName: message.headers.from,
             },

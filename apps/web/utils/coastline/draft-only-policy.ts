@@ -16,6 +16,13 @@ export const COASTLINE_REGISTERED_CAPABILITIES = [
   "teams_assistant",
   "analytics",
 ] as const;
+type CoastlineCapability = (typeof COASTLINE_REGISTERED_CAPABILITIES)[number];
+
+export function isCoastlineCapabilityRegistered(
+  capability: CoastlineCapability | undefined,
+) {
+  return capability !== undefined && COASTLINE_REGISTERED_CAPABILITIES.includes(capability);
+}
 
 export class CoastlineDraftOnlyPolicyError extends Error {
   readonly code = COASTLINE_DRAFT_ONLY_POLICY_CODE;
@@ -30,39 +37,39 @@ export class CoastlineDraftOnlyPolicyError extends Error {
   }
 }
 
-const REGISTERED_ACTION_TYPES = new Set<string>([
-  ActionType.ARCHIVE,
-  ActionType.LABEL,
-  ActionType.DRAFT_EMAIL,
-  ActionType.DRAFT_MESSAGING_CHANNEL,
-  ActionType.NOTIFY_MESSAGING_CHANNEL,
-  ActionType.MARK_READ,
-  ActionType.DIGEST,
-  ActionType.MOVE_FOLDER,
-]);
+const ACTION_CAPABILITIES: Partial<Record<string, CoastlineCapability>> = {
+  [ActionType.ARCHIVE]: "archive",
+  [ActionType.LABEL]: "cold_email_classification",
+  [ActionType.DRAFT_EMAIL]: "draft_reply",
+  [ActionType.DRAFT_MESSAGING_CHANNEL]: "teams_assistant",
+  [ActionType.NOTIFY_MESSAGING_CHANNEL]: "teams_assistant",
+  [ActionType.MARK_READ]: "cold_email_classification",
+  [ActionType.DIGEST]: "analytics",
+  [ActionType.MOVE_FOLDER]: "archive",
+};
 
-const REGISTERED_MUTATIONS = new Set([
-  "ARCHIVE",
-  "ARCHIVE_THREAD",
-  "BULK_ARCHIVE",
-  "CHANGE_KEEP_TO_DONE",
-  "CLEAN_INBOX",
-  "BLOCK_UNSUBSCRIBED_EMAIL",
-  "DELETE_AI_DRAFT",
-  "LABEL_MESSAGE",
-  "MARK_NOT_COLD_EMAIL",
-  "MARK_READ",
-  "MARK_READ_THREAD",
-  "MOVE_FOLDER",
-  "MOVE_THREAD_TO_FOLDER",
-  "REMOVE_COLD_EMAIL_LABEL",
-  "UNARCHIVE_THREAD",
-  "UNDO_CLEAN_INBOX",
-  "UNSUBSCRIBE",
-  "bulkArchive",
-  "cleanInbox",
-  "unsubscribeSender",
-]);
+const MUTATION_CAPABILITIES: Record<string, CoastlineCapability> = {
+  ARCHIVE: "archive",
+  ARCHIVE_THREAD: "archive",
+  BULK_ARCHIVE: "archive",
+  CHANGE_KEEP_TO_DONE: "archive",
+  CLEAN_INBOX: "archive",
+  BLOCK_UNSUBSCRIBED_EMAIL: "unsubscribe_https",
+  DELETE_AI_DRAFT: "stale_ai_draft_cleanup",
+  LABEL_MESSAGE: "cold_email_classification",
+  MARK_NOT_COLD_EMAIL: "cold_email_classification",
+  MARK_READ: "cold_email_classification",
+  MARK_READ_THREAD: "cold_email_classification",
+  MOVE_FOLDER: "archive",
+  MOVE_THREAD_TO_FOLDER: "archive",
+  REMOVE_COLD_EMAIL_LABEL: "cold_email_classification",
+  UNARCHIVE_THREAD: "archive",
+  UNDO_CLEAN_INBOX: "archive",
+  UNSUBSCRIBE: "unsubscribe_https",
+  bulkArchive: "archive",
+  cleanInbox: "archive",
+  unsubscribeSender: "unsubscribe_https",
+};
 
 const BLOCKED_MUTATIONS = new Set([
   "DELETE_DRAFT",
@@ -91,7 +98,8 @@ export function assertCoastlineMutationAllowed({
 }): void {
   if (
     coastlineDraftProposalsEnabled &&
-    (!REGISTERED_MUTATIONS.has(mutation) || BLOCKED_MUTATIONS.has(mutation))
+    (!isCoastlineCapabilityRegistered(MUTATION_CAPABILITIES[mutation]) ||
+      BLOCKED_MUTATIONS.has(mutation))
   ) {
     throw new CoastlineDraftOnlyPolicyError(mutation, surface);
   }
@@ -112,7 +120,7 @@ export function assertCoastlineDraftOnlyAction({
 
   if (
     providerName !== "microsoft" ||
-    !REGISTERED_ACTION_TYPES.has(actionType) ||
+    !isCoastlineCapabilityRegistered(ACTION_CAPABILITIES[actionType]) ||
     (actionType === ActionType.DRAFT_EMAIL && !providerCapabilities.canDraftEmail)
   ) {
     throw new CoastlineDraftOnlyPolicyError(actionType);

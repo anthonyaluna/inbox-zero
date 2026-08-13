@@ -19,17 +19,15 @@ describe("applyCoastlineDraftQa", () => {
     ).toContain("[Confirm: case number]");
   });
 
-  it("rejects more than one ask and unapproved placeholders", () => {
-    expect(() =>
+  it("corrects more than one ask and unapproved placeholders without dropping the draft", () => {
+    expect(
       applyCoastlineDraftQa("Can you send the invoice? Can you also confirm the date? [Pending: owner]"),
-    ).toThrow(/one clear ask|placeholder/i);
+    ).toBe("Can you send the invoice? Can you also confirm the date. [Confirm: details]");
   });
 
-  it("rejects slop tells and drafts over the word limit", () => {
-    expect(() => applyCoastlineDraftQa("Hope you are well.")).toThrow(/slop/i);
-    expect(() => applyCoastlineDraftQa(Array(182).fill("word").join(" "))).toThrow(
-      /180 word/i,
-    );
+  it("removes slop tells and caps drafts at 180 words", () => {
+    expect(applyCoastlineDraftQa("Hope you are well.")).toBe("[Confirm: details]");
+    expect(applyCoastlineDraftQa(Array(182).fill("word").join(" ")).split(/\s+/)).toHaveLength(180);
   });
 
   it("adds the escalation marker for an unmarked sensitive incoming matter", () => {

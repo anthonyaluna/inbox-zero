@@ -19,6 +19,13 @@ export async function sendNotificationEmail({
   renderHtml: () => Promise<string>;
   logger: Logger;
 }): Promise<void> {
+  if (env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
+    logger.info("Coastline policy skipped outbound notification email", {
+      subject,
+    });
+    return;
+  }
+
   if (env.RESEND_API_KEY) {
     try {
       await sendViaResend();

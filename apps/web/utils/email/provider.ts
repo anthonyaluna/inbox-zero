@@ -46,11 +46,12 @@ export async function createEmailProvider({
 
     const client = await getOutlookClientForEmail({ emailAccountId, logger });
     return withCoastlineProviderMutationGuard(
-      withProviderFailureLogging(new OutlookProvider(client, logger), {
+      withProviderFailureLogging(new OutlookProvider(client, logger, emailAccountId), {
         emailAccountId,
         provider: rateLimitProvider,
         logger,
-      }, { allowOwnedDraftCleanup }),
+      }),
+      { allowOwnedDraftCleanup },
     );
   } catch (error) {
     logger.warn("Failed to create email provider", {

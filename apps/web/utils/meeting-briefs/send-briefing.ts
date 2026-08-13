@@ -91,7 +91,7 @@ export async function sendBriefing({
 
   const deliveryPromises: Promise<void>[] = [];
 
-  if (sendEmail) {
+  if (sendEmail && !env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
     deliveryPromises.push(
       sendBriefingViaEmail({
         event,
@@ -103,6 +103,9 @@ export async function sendBriefing({
         logger,
       }),
     );
+  }
+  if (sendEmail && env.COASTLINE_DRAFT_PROPOSALS_ENABLED) {
+    logger.info("Coastline policy skipped outbound meeting briefing email");
   }
 
   for (const channel of channels) {

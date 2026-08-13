@@ -48,6 +48,7 @@ export interface EmailSignature {
   email: string;
   isDefault: boolean;
   signature: string;
+  sourceMessageId?: string;
 }
 
 export interface SentMessagePage {
@@ -126,7 +127,15 @@ export interface EmailProvider {
     userEmail: string,
     executedRule?: { id: string; threadId: string; emailAccountId: string },
     coastlineDraftMarker?: string,
-  ): Promise<{ draftId: string }>;
+  ): Promise<{
+    draftId: string;
+    signatureColorEvidence?: {
+      color: string;
+      evidenceStatus: "verified" | "last_known" | "configured_default";
+      signatureSha256?: string;
+      sourceMessageId?: string;
+    };
+  }>;
   findCoastlineDraftsByMarker?(marker: string): Promise<ParsedMessage[]>;
   forwardEmail(
     email: ParsedMessage,

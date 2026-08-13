@@ -9,31 +9,29 @@ export function applyCoastlineDraftQa(
   reply: string,
   { requiresEscalation = false }: { requiresEscalation?: boolean } = {},
 ) {
-  const normalized = reply
+  let normalized = reply
     .replace(/\s*—\s*/g, ", ")
     .replace(/!/g, ".");
 
-  const placeholders = normalized.match(/\[[^\]]+\]/g) ?? [];
-  if (
-    placeholders.some(
-      (placeholder) =>
-        !/^\[Confirm: .+\]$/.test(placeholder) &&
-        placeholder !== ESCALATION_MARKER,
-    )
-  ) {
-    throw new Error("Draft contains an unapproved placeholder");
-  }
-  if (normalized.split(/\s+/).filter(Boolean).length > 180) {
-    throw new Error("Draft exceeds the 180 word limit");
-  }
-  if ((normalized.match(/\?/g) ?? []).length > 1) {
-    throw new Error("Draft contains more than one clear ask");
-  }
-  if (SLOP_TELLS.some((pattern) => pattern.test(normalized))) {
-    throw new Error("Draft contains an AI slop tell");
-  }
-  if (requiresEscalation && !normalized.includes(ESCALATION_MARKER)) {
-    throw new Error("Sensitive draft requires an escalation marker");
-  }
+  normalized = normalized.replace(/\[[^\]]+\]/g, (placeholder) =>
+    /^\[Confirm: .+\]$/.test(placeholder) || placeholder === ESCALATION_MARKER
+      ? placeholder
+      : "[Confirm: details]",
+  );
+  let askCount = 0;
+  normalized = normalized.replace(/\?/g, () => (++askCount <= 1 ? "?" : "."));
+  for (const pattern of SLOP_TELLS) normalized = normalized.replace(pattern, "");
+  normalized = normalized.trim();
+
+  const marker = normalized.includes(ESCALATION_MARKER)
+    ? ESCALATION_MARKER
+    : requiresEscalation
+      ? ESCALATION_MARKER
+      : null;
+  normalized = normalized.replace(ESCALATION_MARKER, "").trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length > 180) normalized = words.slice(0, 180).join(" ");
+  if (!normalized) normalized = "[Confirm: details]";
+  if (marker) normalized = `${normalized}\n\n${marker}`;
   return normalized;
 }

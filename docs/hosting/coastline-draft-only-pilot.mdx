@@ -1,167 +1,51 @@
 ---
-title: Coastline Microsoft production runtime
-description: Boundary contract for registered Inbox Zero capabilities in Coastline's Microsoft 365 runtime.
+title: Coastline Inbox Zero runtime
+description: One-stack Azure runtime contract for Coastline registered Inbox Zero capabilities.
 ---
 
-# Coastline Microsoft production runtime
+# Coastline Inbox Zero runtime
 
-Registered Coastline capabilities may read, classify, draft, organize, file,
-unsubscribe, and create clear calendar events in Microsoft 365. It must not
-send, reply, forward, trash messages, or delete drafts.
+The single Azure-hosted Coastline runtime is enabled with
+`COASTLINE_DRAFT_PROPOSALS_ENABLED=true`. Registered capabilities may draft,
+organize, file attachments, unsubscribe through verified HTTPS links, create
+calendar events, and create Teams actions. They execute through their existing
+provider-boundary policy and receipt paths without per-item approval or volume
+limits.
 
-When `COASTLINE_DRAFT_PROPOSALS_ENABLED=true` is set in the local environment,
-registered Microsoft actions return and validate the versioned
-`inbox_zero_draft_proposal.v1` contract from
-`apps/web/utils/coastline/draft-proposal.ts`. The existing Inbox Zero draft
-creator still owns the Microsoft Graph draft write, while the Coastline adapter
-maps the validated proposal to `outlook_draft_create`. The action executor
-validates the proposal again before recording the draft ID. No send call is
-made.
+`NEXT_PUBLIC_EMAIL_SEND_ENABLED=false` is permanent for this deployment.
+`Mail.Send` is not requested. Coastline rejects send, reply, forward, trash,
+and non-owned draft deletion at the provider boundary. Resend and notification
+email paths are also suppressed while the Coastline runtime flag is enabled.
 
-The proposal body is transient operational data. Durable records should retain only
-the account, thread, source message, model, confidence, idempotency key, and
-execution receipt fields needed for audit. Do not commit mailbox contents,
-OAuth tokens, cookies, or local exports.
+The Outlook draft renderer writes deterministic Verdana 10pt HTML. Signature
+color is derived from a sent-message signature when available and recorded with
+its source ID and hash. A retained color is marked `last_known`; an absent
+signature is marked `configured_default`, never verified evidence.
 
-Use the runtime flag for one production capability policy. Source binding,
-idempotency, rollback, and terminal readback remain completion controls, not
-per-item approval gates.
+## One-time canary
 
-## One-time canary contract
+Before the first live use, run one dedicated canary mailbox through the Azure
+runtime. Record the deployed artifact identifier, exact target, idempotency
+replay, provider readback, and correction path in the existing receipt store.
+This is a one-time proof exercise, not an ongoing reviewer or SHA approval
+gate. Do not claim this canary or a production deployment occurred without its
+external receipt.
 
-Bind deployment variables outside Git. The first isolated mailbox canary records
-the deployed artifact, provider readback, idempotency result, and rollback
-path. These are proof records, not routine approval gates.
-
-The required environment secrets are
-`COASTLINE_INBOX_ZERO_STAGING_DATABASE_URL`,
-`COASTLINE_INBOX_ZERO_STAGING_AUTH_SECRET`,
-`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_ID`,
-`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_CLIENT_SECRET`, and
-`COASTLINE_INBOX_ZERO_STAGING_CRON_SECRET`. Required non-secret variables are
-`COASTLINE_INBOX_ZERO_STAGING_BASE_URL`, and
-`COASTLINE_INBOX_ZERO_STAGING_MICROSOFT_EMULATOR_URL`. Store names in documentation and receipts;
-never store their values in Git.
-
-The deployed artifact identifier belongs in the receipt for traceability. It
-does not require a reviewer before a registered capability executes.
-
-`MICROSOFT_BASE_URL` must resolve to
-`localhost` or the `microsoft-emulator` Docker service, not Microsoft Graph.
-`NEXT_PUBLIC_BASE_URL` is the staging origin; register
-`${NEXT_PUBLIC_BASE_URL}/api/outlook/linking/callback` as the Microsoft OAuth
-redirect URL.
+Keep runtime values out of Git. The deployment requires its database,
+authentication, Microsoft OAuth, queue, and cron settings; it also sets:
 
 ```text
-DATABASE_URL=<protected staging database URL>
-AUTH_SECRET=<protected secret>
-MICROSOFT_CLIENT_ID=<staging emulator client ID>
-MICROSOFT_CLIENT_SECRET=<protected staging emulator client secret>
-NEXT_PUBLIC_BASE_URL=https://inbox-zero-staging.example.test
-COASTLINE_STAGING_BASE_URL=https://inbox-zero-staging.example.test
-COASTLINE_STAGING_ARTIFACT_SHA=<deployed 40-character SHA>
-COASTLINE_DEPLOYED_ARTIFACT_SHA=<immutable SHA injected by the deployer>
-COASTLINE_STAGING_QUEUE_NAME=<deployed BullMQ queue name>
-MICROSOFT_BASE_URL=http://microsoft-emulator:4003
-QUEUE_BACKEND=bullmq
-REDIS_URL=redis://redis:6379
-CRON_SECRET=<protected secret>
 COASTLINE_DRAFT_PROPOSALS_ENABLED=true
 NEXT_PUBLIC_EMAIL_SEND_ENABLED=false
 ```
 
-`Mail.Send` is disabled by `NEXT_PUBLIC_EMAIL_SEND_ENABLED=false`; the
-Coastline policy additionally rejects every non-draft mutation before it can
-reach a provider. Do not substitute a live Microsoft endpoint, enable send, or
-run the verification scripts against production.
+Use `COASTLINE_DRAFT_PROPOSALS_ENABLED=false` as the emergency kill switch.
+It disables Coastline registered automation while leaving the application
+itself available for investigation and recovery.
 
-`COASTLINE_STAGING_BASE_URL` is a protected deployment value and must exactly
-match `-BaseUrl` for non-loopback verification. A hostname containing words
-such as `staging`, `test`, or `emulator` is not evidence that an endpoint is
-safe. Loopback is the only implicit local exception.
+## Local validation
 
-`COASTLINE_STAGING_ARTIFACT_SHA` identifies the deployed artifact.
-`COASTLINE_DEPLOYED_ARTIFACT_SHA` must come from immutable deployment metadata,
-not a request or local Git checkout, and must match it.
-The evidence endpoint reads worker identity from the active BullMQ worker
-registration for `COASTLINE_STAGING_QUEUE_NAME`; it derives queue identity from
-that deployed queue and proves reachability through its Redis client. The
-connection string and worker registration details are never returned.
-
-From the staging host, run the preflight before releasing an artifact:
-
-```powershell
-pwsh -File scripts/Invoke-CoastlineInboxZeroPreflight.ps1 -Mode Staging
-```
-
-After the app, worker, Redis queue, and cron container are running, verify the
-staging deployment and retain only the sanitized receipt:
-
-```powershell
-pwsh -File scripts/Verify-CoastlineInboxZeroStaging.ps1 `
-  -BaseUrl https://inbox-zero-staging.example.test `
-  -OutputPath C:\staging-receipts\inbox-zero-staging.json
-```
-
-The verifier first performs an unauthenticated cron request and requires a
-`401` response, then uses `CRON_SECRET` only for authenticated probes. It
-requires `/api/coastline/staging-evidence` to return the current timestamped
-nonce, deployed artifact SHA, matching cron evidence ID, a running registered
-worker, and a reachable deployed queue. A missing endpoint, mismatch, stale
-nonce, or unavailable runtime produces a failed receipt. A loopback, local
-Docker, or emulator pass is emitted with `provenance=local_diagnostic` and
-`is_loopback=true` when applicable. It is local diagnostic evidence only and is
-never a staging pass. The one-time canary records a fresh exact receipt marked
-`provenance=remote_https` and `is_loopback=false` for the deployed SHA.
-
-## Windows Omen startup
-
-For the isolated Windows checkout, start the local services first:
-
-```powershell
-docker compose up -d db redis serverless-redis-http
-pnpm.cmd --filter inbox-zero-ai exec prisma generate
-pnpm.cmd --filter inbox-zero-ai exec prisma migrate deploy --schema prisma/schema.prisma
-```
-
-Start the emulators with the committed `emulate.config.yaml` seed, then start
-the web app with the local `.env.local` file. Use the local Ollama container or
-another explicitly configured development model for AI drafting. Verify
-`http://localhost:3000`, `http://localhost:3002/.well-known/openid-configuration`,
-and `http://localhost:3003/.well-known/openid-configuration` before testing the
-draft flow.
-
-On Windows, use `pnpm.cmd` for child processes. The upstream development
-helper currently assumes a Unix `pnpm` shim and a local `psql` binary, so the
-direct commands above avoid those two host-specific startup failures.
-
-## Fixture validation
-
-Run the contract and action tests without external systems:
-
-```powershell
-pnpm.cmd --filter inbox-zero-ai exec vitest run `
-  utils/coastline/draft-proposal.test.ts `
-  utils/ai/actions.test.ts
-```
-
-Run the Microsoft emulator read-after-write fixture:
-
-```powershell
-$env:RUN_INTEGRATION_TESTS = "1"
-pnpm.cmd --filter inbox-zero-ai exec vitest run `
-  utils/coastline/draft-proposal.integration.test.ts
-```
-
-## Operational readiness boundary
-
-The current decision and exact local validation evidence are recorded in
-[`docs/operations/inbox-zero-operational-readiness.md`](../operations/inbox-zero-operational-readiness.md).
-Run one isolated mailbox canary with same-key replay and rollback proof before
-normal production use. The remote receipt binds the deployed worker artifact
-and heartbeat. Local emulator and mocked-contract results remain diagnostics.
-
-Task 5's runner-level test-harness hardening is parked: the invalid
-string-count path is not reliably catchable while the PowerShell runner uses
-`exit 1` when dot-sourced. A one-time canary uses a dedicated non-production
-mailbox fixture. Do not replace it with a production or shared-mailbox test.
+Local tests and builds never contact Microsoft 365. Run focused Vitest tests,
+TypeScript checks, and `git diff --check` before deployment. A local pass is
+diagnostic evidence only; the one-time Azure canary receipt is the proof of a
+live provider write and readback.

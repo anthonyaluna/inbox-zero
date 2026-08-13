@@ -31,12 +31,13 @@ export const COASTLINE_EXECUTIVE_ASSISTANT_SYSTEM_PROMPT = `Act as the Executive
 
 Protect trust and brand. Be accurate. Move the matter forward. Keep replies concise.
 Use plain English, short sentences, short paragraphs, no jargon, no emojis, no exclamation points, no em dashes, and no filler.
+Client: concise and recommendation first. Tenant: calm, factual, and clear on the next step. Internal: supportive, outcome-focused, and accountable. Vendor or prospect: direct, professional, and efficient.
+Start with Hi [Name], then state verified status, the recommendation or required action, who does what and by what exact date when known, and Coastline's next step when helpful. Close with one clear ask only when needed. CC only when necessary.
 State verified facts only. Use exact dates when known. Never guess dates, approvals, balances, lease terms, legal positions, vendor commitments, or dollar amounts.
 Use [Confirm: X] only for a missing fact. For insurance, accounting, AP, invoices, payments, leases, legal, compliance, Fair Housing, life safety, habitability, PR risk, key-client issues, or matters over $5,000, include [Escalate: Hold for Anthony]. Draft those matters; do not exclude them.
-Use one clear ask at most. Never restate the full thread.`;
+Use one clear ask at most. Never restate the full thread. For scheduling, label Anthony's availability in PT unless the thread states another time zone. Avoid “hope you are well,” “just following up,” and “let me know if you need anything else” unless truly useful.`;
 
-const systemPrompt = `${COASTLINE_EXECUTIVE_ASSISTANT_SYSTEM_PROMPT}
-
+const baseSystemPrompt = `
 You are an expert assistant that drafts email replies.
 
 Use context from the previous emails and the provided knowledge base to make it relevant and accurate.
@@ -63,8 +64,11 @@ When the sender provides a scheduling link or scheduling process, use that path 
 Write an email that follows up on the previous conversation.
 Your reply should aim to continue the conversation or provide new information based on the context or knowledge base. If you have nothing substantial to add, keep the reply minimal.
 By default, keep replies concise, direct, friendly, plainspoken, and no longer than needed. Prefer short declarative sentences over polished or overly elaborate phrasing.
-The user's writing style can override these defaults.
-`;
+The user's writing style can override these defaults.`;
+
+const systemPrompt = env.COASTLINE_DRAFT_PROPOSALS_ENABLED
+  ? `${COASTLINE_EXECUTIVE_ASSISTANT_SYSTEM_PROMPT}\n\n${baseSystemPrompt}`
+  : baseSystemPrompt;
 
 const defaultWritingStyle = `Keep it concise, direct, and friendly.
 Keep the reply short. Aim for 2 sentences at most unless a brief answer to multiple questions needs more.
@@ -401,17 +405,19 @@ export async function aiDraftReplyWithConfidence({
   }
 
   return {
-    reply: applyCoastlineDraftQa(
-      addHighRiskEscalationMarker({
-        reply: normalizeDraftReplyFormatting(result.object.reply),
-        latestMessage: messages.at(-1),
-      }),
-      {
-        requiresEscalation: Boolean(
-          messages.at(-1) && isHighRiskIncomingMatter(messages.at(-1)!),
-        ),
-      },
-    ),
+    reply: env.COASTLINE_DRAFT_PROPOSALS_ENABLED
+      ? applyCoastlineDraftQa(
+          addHighRiskEscalationMarker({
+            reply: normalizeDraftReplyFormatting(result.object.reply),
+            latestMessage: messages.at(-1),
+          }),
+          {
+            requiresEscalation: Boolean(
+              messages.at(-1) && isHighRiskIncomingMatter(messages.at(-1)!),
+            ),
+          },
+        )
+      : normalizeDraftReplyFormatting(result.object.reply),
     confidence: mapLlmDraftConfidence(result.object.confidence),
     attribution: attributionTracker.attribution,
   };

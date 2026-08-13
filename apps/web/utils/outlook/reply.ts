@@ -43,8 +43,11 @@ export const createOutlookReplyContent = ({
     htmlContent || (textContent ? renderMixedContentAsHtml(textContent) : "");
 
   // Coastline drafts use the same compact font family as Anthony's Outlook signature.
+  const verifiedTextColor = /^#[0-9a-f]{6}$/i.test(textColor)
+    ? textColor.toLowerCase()
+    : "#000000";
   const outlookFontStyle =
-    `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${textColor};`;
+    `font-family: Verdana, Arial, Helvetica, sans-serif; font-size: 10pt; color: ${verifiedTextColor};`;
 
   // Format HTML version with Outlook-style formatting
   const html =

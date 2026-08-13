@@ -126,6 +126,20 @@ describe("Outlook email formatting", () => {
     expect(html).not.toMatch(/<td><br>/);
   });
 
+  it("accepts only a normalized signature text color at the HTML renderer boundary", () => {
+    const { html } = createOutlookReplyContent({
+      textContent: "Draft",
+      textColor: "#000000; background:url(unsafe)",
+      message: {
+        headers: { date: "2025-02-06", from: "a@example.com", subject: "S", to: "b@example.com" },
+        textPlain: "Original",
+        textHtml: "",
+      },
+    });
+    expect(html).toContain("color: #000000;");
+    expect(html).not.toContain("background:url");
+  });
+
   it("keeps escaped markup in text content escaped", () => {
     const message: Pick<ParsedMessage, "headers" | "textPlain" | "textHtml"> = {
       headers: {
